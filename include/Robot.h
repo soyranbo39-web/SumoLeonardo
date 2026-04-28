@@ -17,6 +17,8 @@ class Robot {
     bool esperarConPrioridadPisoYEnemigo(unsigned long duracionMs);
     void retrocesoSeguro(unsigned long duracionMs);
     void giroEscapeSeguro(bool haciaDerecha, unsigned long duracionMs);
+    void avanceEscapeSeguro(unsigned long duracionMs);
+    void ejecutarBusquedaCompacta(bool haciaDerecha, unsigned long tiempoEnCiclo, unsigned long avanceMs);
 public:
     Robot();
     void setup();

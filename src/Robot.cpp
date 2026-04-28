@@ -2,6 +2,12 @@
 
 namespace {
 const bool TELEMETRIA_ACTIVA = false;
+const unsigned long RETROCESO_BORDE_SIMPLE_MS = 260;
+const unsigned long RETROCESO_BORDE_DOBLE_MS = 320;
+const unsigned long GIRO_ESCAPE_BORDE_SIMPLE_MS = 220;
+const unsigned long GIRO_ESCAPE_BORDE_DOBLE_MS = 250;
+const unsigned long AVANCE_INTERIOR_SIMPLE_MS = 140;
+const unsigned long AVANCE_INTERIOR_DOBLE_MS = 170;
 }
 
 
@@ -71,7 +77,11 @@ void Robot::retrocesoSeguro(unsigned long duracionMs) {
 }
 
 void Robot::giroEscapeSeguro(bool haciaDerecha, unsigned long duracionMs) {
+    const unsigned long giroMinimoMs = 90;
+    const unsigned long giroCorreccionMs = 40;
     unsigned long inicio = millis();
+    bool bordeLiberado = false;
+
     while (millis() - inicio < duracionMs) {
         bool pisoIzq = false;
         bool pisoDer = false;
@@ -83,12 +93,55 @@ void Robot::giroEscapeSeguro(bool haciaDerecha, unsigned long duracionMs) {
             moverIzquierda();
         }
 
-        // Mantiene al menos un giro corto y sale cuando ya no detecta borde.
-        if (!enBorde && (millis() - inicio) > 60) {
+        unsigned long tiempoGirando = millis() - inicio;
+
+        // Obliga un giro corto para despegarse del borde, pero no deja que siga rotando de mas.
+        if (tiempoGirando < giroMinimoMs) {
+            delay(5);
+            continue;
+        }
+
+        if (!enBorde) {
+            if (bordeLiberado || tiempoGirando >= (giroMinimoMs + giroCorreccionMs)) {
+                return;
+            }
+            bordeLiberado = true;
+        } else {
+            bordeLiberado = false;
+        }
+
+        if (tiempoGirando >= duracionMs) {
             return;
         }
 
         delay(5);
+    }
+}
+
+void Robot::avanceEscapeSeguro(unsigned long duracionMs) {
+    unsigned long inicio = millis();
+    while (millis() - inicio < duracionMs) {
+        bool pisoIzq = false;
+        bool pisoDer = false;
+        if (leerPiso(pisoIzq, pisoDer)) {
+            return;
+        }
+
+        moverAdelante();
+        delay(5);
+    }
+}
+
+void Robot::ejecutarBusquedaCompacta(bool haciaDerecha, unsigned long tiempoEnCiclo, unsigned long avanceMs) {
+    if (tiempoEnCiclo < avanceMs) {
+        moverAdelante();
+        return;
+    }
+
+    if (haciaDerecha) {
+        motores.curvaDerecha(Velocidad_maxima);
+    } else {
+        motores.curvaIzquierda(Velocidad_maxima);
     }
 }
 
@@ -137,15 +190,18 @@ void Robot::sensoresPiso(bool pisoIzq, bool pisoDer) {
     static bool giroAlternadoDerecha = true;
 
     if (pisoIzq && pisoDer) {
-        retrocesoSeguro(180); // 120 el tiempo anterior 
-        giroEscapeSeguro(giroAlternadoDerecha, 280);// 220 el tiempo anterior
+        retrocesoSeguro(RETROCESO_BORDE_DOBLE_MS);
+        giroEscapeSeguro(giroAlternadoDerecha, GIRO_ESCAPE_BORDE_DOBLE_MS);
+        avanceEscapeSeguro(AVANCE_INTERIOR_DOBLE_MS);
         giroAlternadoDerecha = !giroAlternadoDerecha;
     } else if (pisoDer) {
-        retrocesoSeguro(180);
-        giroEscapeSeguro(false, 280);
+        retrocesoSeguro(RETROCESO_BORDE_SIMPLE_MS);
+        giroEscapeSeguro(false, GIRO_ESCAPE_BORDE_SIMPLE_MS);
+        avanceEscapeSeguro(AVANCE_INTERIOR_SIMPLE_MS);
     } else if (pisoIzq) {
-        retrocesoSeguro(180);
-        giroEscapeSeguro(true, 280);
+        retrocesoSeguro(RETROCESO_BORDE_SIMPLE_MS);
+        giroEscapeSeguro(true, GIRO_ESCAPE_BORDE_SIMPLE_MS);
+        avanceEscapeSeguro(AVANCE_INTERIOR_SIMPLE_MS);
     }
 }
 
@@ -271,14 +327,16 @@ void Robot::loop() {
         unsigned long tiempoSinContacto = ahora - ultimoContacto;
 
         // Si acaba de perder al oponente, empuja hacia adelante para intentar reconexion rapida.
-        if (tiempoSinContacto < 250) {
+        if (tiempoSinContacto < 220) {
             inicioPulsoBusqueda = 0;
-                motores.adelante(Velocidad_maxima);
+            motores.adelante(Velocidad_maxima);
         } else {
-            // Busqueda por pulsos: avance corto seguido de un giro corto.
-            const unsigned long duracionPulsoAvance = 170;
-            const unsigned long duracionPulsoGiro = 110;
+            // En un dojo de 70x70 conviene barrer compacto: avances cortos y giros en curva.
+            const bool busquedaExtendida = tiempoSinContacto > 1200;
+            const unsigned long duracionPulsoAvance = busquedaExtendida ? 140 : 105;
+            const unsigned long duracionPulsoGiro = busquedaExtendida ? 95 : 80;
             const unsigned long duracionCicloBusqueda = duracionPulsoAvance + duracionPulsoGiro;
+            const unsigned long ciclosAntesDeCambiar = busquedaExtendida ? 3UL : 4UL;
 
             if (inicioPulsoBusqueda == 0) {
                 inicioPulsoBusqueda = ahora;
@@ -287,19 +345,13 @@ void Robot::loop() {
             unsigned long tiempoEnBusqueda = ahora - inicioPulsoBusqueda;
             unsigned long tiempoEnCiclo = tiempoEnBusqueda % duracionCicloBusqueda;
 
-            if (tiempoEnBusqueda >= (duracionCicloBusqueda * 2UL)) {
+            if (tiempoEnBusqueda >= (duracionCicloBusqueda * ciclosAntesDeCambiar)) {
                 busquedaDerecha = !busquedaDerecha;
                 inicioPulsoBusqueda = ahora;
                 tiempoEnCiclo = 0;
             }
 
-            if (tiempoEnCiclo < duracionPulsoAvance) {
-                moverAdelante();
-            } else if (busquedaDerecha) {
-                moverDerecha();
-            } else {
-                moverIzquierda();
-            }
+            ejecutarBusquedaCompacta(busquedaDerecha, tiempoEnCiclo, duracionPulsoAvance);
         }
     }
 }
