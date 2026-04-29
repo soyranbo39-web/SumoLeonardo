@@ -2,12 +2,12 @@
 
 namespace {
 const bool TELEMETRIA_ACTIVA = false;
-const unsigned long RETROCESO_BORDE_SIMPLE_MS = 260;
-const unsigned long RETROCESO_BORDE_DOBLE_MS = 320;
-const unsigned long GIRO_ESCAPE_BORDE_SIMPLE_MS = 220;
-const unsigned long GIRO_ESCAPE_BORDE_DOBLE_MS = 250;
-const unsigned long AVANCE_INTERIOR_SIMPLE_MS = 140;
-const unsigned long AVANCE_INTERIOR_DOBLE_MS = 170;
+const unsigned long RETROCESO_BORDE_SIMPLE_MS = 230;
+const unsigned long RETROCESO_BORDE_DOBLE_MS = 290;
+const unsigned long GIRO_ESCAPE_BORDE_SIMPLE_MS = 210;
+const unsigned long GIRO_ESCAPE_BORDE_DOBLE_MS = 245;
+const unsigned long AVANCE_INTERIOR_SIMPLE_MS = 180;
+const unsigned long AVANCE_INTERIOR_DOBLE_MS = 210;
 }
 
 
@@ -171,7 +171,7 @@ void Robot::ataqueEnemigo() {
 }
 
 void Robot::moverAdelante() {
-    motores.adelante(Velocidad_movimiento_seguir);
+    motores.adelante(Velocidad_maxima);
 }
 
 void Robot::retroceder() {
@@ -209,24 +209,28 @@ void Robot::sensoresFrontales(bool central, bool derecho, bool izquierdo) {
     if (central || (derecho && izquierdo)) {
         ataqueEnemigo();
     } else if (derecho) {
-        moverDerecha();
-        if (esperarConPrioridadPisoYEnemigo(55)) {
+        motores.derecha(Velocidad_maxima);
+        if (esperarConPrioridadPisoYEnemigo(70)) {
             return;
         }
         motores.adelante(Velocidad_maxima);
-        esperarConPrioridadPisoYEnemigo(55);
+        esperarConPrioridadPisoYEnemigo(80);
     } else if (izquierdo) {
-        moverIzquierda();
-        if (esperarConPrioridadPisoYEnemigo(55)) {
+        motores.izquierda(Velocidad_maxima);
+        if (esperarConPrioridadPisoYEnemigo(70)) {
             return;
         }
         motores.adelante(Velocidad_maxima);
-        esperarConPrioridadPisoYEnemigo(55);
+        esperarConPrioridadPisoYEnemigo(80);
     }
 }
 
 void Robot::sensoresLaterales(bool sensorIzquierdo, bool sensorDerecho) {
-    if (sensorIzquierdo && sensorDerecho) return;
+    if (sensorIzquierdo && sensorDerecho) {
+        motores.adelante(Velocidad_maxima);
+        esperarConPrioridadPiso(85);
+        return;
+    }
 
     bool pisoIzq = false, pisoDer = false;
     leerPiso(pisoIzq, pisoDer);
@@ -238,10 +242,16 @@ void Robot::sensoresLaterales(bool sensorIzquierdo, bool sensorDerecho) {
     // puede permanecer activo durante todo el giro y abortarlo demasiado pronto.
     if (sensorIzquierdo) {
         motores.curvaIzquierda(Velocidad_maxima);  // Solo rueda derecha gira
-        esperarConPrioridadPiso(110);
+        if (!esperarConPrioridadPiso(145)) {
+            motores.adelante(Velocidad_maxima);
+            esperarConPrioridadPiso(90);
+        }
     } else if (sensorDerecho) {
         motores.curvaDerecha(Velocidad_maxima);    // Solo rueda izquierda gira
-        esperarConPrioridadPiso(110);
+        if (!esperarConPrioridadPiso(145)) {
+            motores.adelante(Velocidad_maxima);
+            esperarConPrioridadPiso(90);
+        }
     }
 }
 
@@ -276,8 +286,8 @@ void Robot::loop() {
     if (LateralIzqRaw) ultimoLateralIzqMs = ahora;
 
     // Persistencia corta para no perder al enemigo por parpadeo de lectura.
-    const unsigned long persistenciaFrontalMs = 70;
-    const unsigned long persistenciaLateralMs = 90;
+    const unsigned long persistenciaFrontalMs = 95;
+    const unsigned long persistenciaLateralMs = 130;
     bool FrontalDer = FrontalDerRaw || ((ahora - ultimoFrontalDerMs) <= persistenciaFrontalMs);
     bool FrontalIzq = FrontalIzqRaw || ((ahora - ultimoFrontalIzqMs) <= persistenciaFrontalMs);
     bool FrontalCentral = FrontalCentralRaw || ((ahora - ultimoFrontalCentralMs) <= persistenciaFrontalMs);
@@ -329,16 +339,16 @@ void Robot::loop() {
         unsigned long tiempoSinContacto = ahora - ultimoContacto;
 
         // Si acaba de perder al oponente, empuja hacia adelante para intentar reconexion rapida.
-        if (tiempoSinContacto < 220) {
+        if (tiempoSinContacto < 340) {
             inicioPulsoBusqueda = 0;
             motores.adelante(Velocidad_maxima);
         } else {
             // En un dojo de 70x70 conviene barrer compacto: avances cortos y giros en curva.
             const bool busquedaExtendida = tiempoSinContacto > 1200;
-            const unsigned long duracionPulsoAvance = busquedaExtendida ? 140 : 105;
-            const unsigned long duracionPulsoGiro = busquedaExtendida ? 95 : 80;
+            const unsigned long duracionPulsoAvance = busquedaExtendida ? 160 : 205;
+            const unsigned long duracionPulsoGiro = busquedaExtendida ? 70 : 55;
             const unsigned long duracionCicloBusqueda = duracionPulsoAvance + duracionPulsoGiro;
-            const unsigned long ciclosAntesDeCambiar = busquedaExtendida ? 3UL : 4UL;
+            const unsigned long ciclosAntesDeCambiar = busquedaExtendida ? 2UL : 3UL;
 
             if (inicioPulsoBusqueda == 0) {
                 inicioPulsoBusqueda = ahora;
