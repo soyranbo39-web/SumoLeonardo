@@ -264,6 +264,18 @@ void Robot::sensoresLaterales(bool sensorIzquierdo, bool sensorDerecho) {
 
 void Robot::loop() {
     // ------------------ Control remoto (nivel + debounce) ------------------
+    static bool estadoAnteriorEncendido = false;
+    static bool busquedaDerecha = true;
+    static uint8_t faseBusqueda = 0;
+    static unsigned long inicioFaseBusqueda = 0;
+    static bool busquedaActiva = false;
+    static unsigned long ultimoFrontalDerMs = 0;
+    static unsigned long ultimoFrontalIzqMs = 0;
+    static unsigned long ultimoFrontalCentralMs = 0;
+    static unsigned long ultimoLateralDerMs = 0;
+    static unsigned long ultimoLateralIzqMs = 0;
+    static unsigned long inicioApagadoMs = 0;
+
     const unsigned long ahoraControl = millis();
     int lecturaControl = digitalRead(Pin_Control_Remoto);
 
@@ -284,19 +296,40 @@ void Robot::loop() {
         robot_encendido = controlActivo;
     }
 
+    const bool recienEncendido = (!estadoAnteriorEncendido && robot_encendido);
+
     if (!robot_encendido) {
+        // Mantener STOP un tiempo reinicia el ciclo de busqueda a su fase inicial.
+        if (inicioApagadoMs == 0) {
+            inicioApagadoMs = ahoraControl;
+        }
+        if ((ahoraControl - inicioApagadoMs) >= 2500) {
+            busquedaDerecha = true;
+            faseBusqueda = 0;
+            inicioFaseBusqueda = 0;
+            busquedaActiva = false;
+        }
+
         detenerse();
+        estadoAnteriorEncendido = false;
         return;
     }
 
-    static unsigned long ultimoContacto = 0;
-    static bool busquedaDerecha = true;
-    static unsigned long inicioPulsoBusqueda = 0;
-    static unsigned long ultimoFrontalDerMs = 0;
-    static unsigned long ultimoFrontalIzqMs = 0;
-    static unsigned long ultimoFrontalCentralMs = 0;
-    static unsigned long ultimoLateralDerMs = 0;
-    static unsigned long ultimoLateralIzqMs = 0;
+    inicioApagadoMs = 0;
+    estadoAnteriorEncendido = true;
+
+    if (recienEncendido) {
+        // Arranque limpio de busqueda y sensores al pasar de OFF->ON.
+        faseBusqueda = 0;
+        inicioFaseBusqueda = 0;
+        busquedaDerecha = true;
+        ultimoFrontalDerMs = 0;
+        ultimoFrontalIzqMs = 0;
+        ultimoFrontalCentralMs = 0;
+        ultimoLateralDerMs = 0;
+        ultimoLateralIzqMs = 0;
+        busquedaActiva = false;
+    }
 
     const unsigned long ahora = millis();
 
@@ -340,9 +373,7 @@ void Robot::loop() {
     }
 
     const bool enemigoDetectado = FrontalDer || FrontalIzq || FrontalCentral || LateralDer || LateralIzq;
-    if (enemigoDetectado) {
-        ultimoContacto = ahora;
-    }
+    (void)enemigoDetectado;
 
     static unsigned long ultimoReporte = 0;
     const unsigned long intervaloReporteMs = 120;
@@ -360,43 +391,78 @@ void Robot::loop() {
     }
 
     if (PisoIzq || PisoDer) {
-        inicioPulsoBusqueda = 0;
+        inicioFaseBusqueda = 0;
+        faseBusqueda = 0;
+        busquedaActiva = false;
         sensoresPiso(PisoIzq, PisoDer);
     } else if (LateralDer || LateralIzq) {
-        inicioPulsoBusqueda = 0;
+        inicioFaseBusqueda = 0;
+        faseBusqueda = 0;
+        busquedaActiva = false;
         sensoresLaterales(LateralIzq, LateralDer);
     } else if (FrontalDer || FrontalIzq || FrontalCentral) {
-        inicioPulsoBusqueda = 0;
+        inicioFaseBusqueda = 0;
+        faseBusqueda = 0;
+        busquedaActiva = false;
         sensoresFrontales(FrontalCentral, FrontalDer, FrontalIzq);
     } else {
-        unsigned long tiempoSinContacto = ahora - ultimoContacto;
+        // Prioridad 3 (BAJA): busqueda sin enemigo.
+        // Estrategia unica (sin modos): barrido trasero + lateral + empuje frontal corto.
+        const int margenSeguridadPiso = 35;
+        const bool cercaBordeIzq = valorPisoIzq <= (BLANCO + margenSeguridadPiso);
+        const bool cercaBordeDer = valorPisoDer <= (BLANCO + margenSeguridadPiso);
 
-        // Si acaba de perder al oponente, empuja hacia adelante para intentar reconexion rapida.
-        if (tiempoSinContacto < 220) {
-            inicioPulsoBusqueda = 0;
-            motores.adelante(Velocidad_maxima);
-        } else {
-            // En un dojo de 70x70 conviene barrer compacto: avances cortos y giros en curva.
-            const bool busquedaExtendida = tiempoSinContacto > 1200;
-            const unsigned long duracionPulsoAvance = busquedaExtendida ? 140 : 105;
-            const unsigned long duracionPulsoGiro = busquedaExtendida ? 95 : 80;
-            const unsigned long duracionCicloBusqueda = duracionPulsoAvance + duracionPulsoGiro;
-            const unsigned long ciclosAntesDeCambiar = busquedaExtendida ? 3UL : 4UL;
+        if (!busquedaActiva) {
+            busquedaActiva = true;
+            faseBusqueda = 0;
+            inicioFaseBusqueda = ahora;
+        }
 
-            if (inicioPulsoBusqueda == 0) {
-                inicioPulsoBusqueda = ahora;
-            }
+        const unsigned long duraciones[6] = {
+            780, // Fase 0: giro largo para barrer espalda.
+            300, // Fase 1: avance corto.
+            780, // Fase 2: giro largo contrario.
+            300, // Fase 3: avance corto.
+            520, // Fase 4: giro medio para cubrir lateral/frente.
+            200  // Fase 5: empuje frontal corto.
+        };
 
-            unsigned long tiempoEnBusqueda = ahora - inicioPulsoBusqueda;
-            unsigned long tiempoEnCiclo = tiempoEnBusqueda % duracionCicloBusqueda;
-
-            if (tiempoEnBusqueda >= (duracionCicloBusqueda * ciclosAntesDeCambiar)) {
+        if ((ahora - inicioFaseBusqueda) >= duraciones[faseBusqueda]) {
+            inicioFaseBusqueda = ahora;
+            faseBusqueda = (faseBusqueda + 1) % 6;
+            if (faseBusqueda == 0) {
                 busquedaDerecha = !busquedaDerecha;
-                inicioPulsoBusqueda = ahora;
-                tiempoEnCiclo = 0;
             }
+        }
 
-            ejecutarBusquedaCompacta(busquedaDerecha, tiempoEnCiclo, duracionPulsoAvance);
+        // Si detecta cercania de borde durante la busqueda, recentra primero.
+        if (cercaBordeIzq || cercaBordeDer) {
+            if (cercaBordeIzq && !cercaBordeDer) {
+                moverDerecha();
+            } else if (cercaBordeDer && !cercaBordeIzq) {
+                moverIzquierda();
+            } else if (busquedaDerecha) {
+                moverDerecha();
+            } else {
+                moverIzquierda();
+            }
+            faseBusqueda = 0;
+            inicioFaseBusqueda = ahora;
+            return;
+        }
+
+        if (faseBusqueda == 0) {
+            if (busquedaDerecha) moverDerecha(); else moverIzquierda();
+        } else if (faseBusqueda == 1) {
+            motores.adelante(Velocidad_maxima);
+        } else if (faseBusqueda == 2) {
+            if (busquedaDerecha) moverIzquierda(); else moverDerecha();
+        } else if (faseBusqueda == 3) {
+            motores.adelante(Velocidad_maxima);
+        } else if (faseBusqueda == 4) {
+            if (busquedaDerecha) moverDerecha(); else moverIzquierda();
+        } else {
+            motores.adelante(Velocidad_maxima);
         }
     }
 }
