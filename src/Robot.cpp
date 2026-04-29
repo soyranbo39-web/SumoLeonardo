@@ -234,12 +234,14 @@ void Robot::sensoresLaterales(bool sensorIzquierdo, bool sensorDerecho) {
 
     // Gira comprometido 120ms hacia el lado del enemigo.
     // Verifica piso cada 5ms para abortar si hay borde.
+    // Importante: no se corta por "enemigo visto" porque en lateral el sensor
+    // puede permanecer activo durante todo el giro y abortarlo demasiado pronto.
     if (sensorIzquierdo) {
         motores.curvaIzquierda(Velocidad_maxima);  // Solo rueda derecha gira
-        esperarConPrioridadPisoYEnemigo(110);
+        esperarConPrioridadPiso(110);
     } else if (sensorDerecho) {
         motores.curvaDerecha(Velocidad_maxima);    // Solo rueda izquierda gira
-        esperarConPrioridadPisoYEnemigo(110);
+        esperarConPrioridadPiso(110);
     }
 }
 

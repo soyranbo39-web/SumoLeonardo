@@ -29,9 +29,9 @@
 
 // Parámetros
 #define BLANCO 120
-#define Velocidad_movimiento_seguir 250// 160 
-#define Velocidad_estandar 250 //180  
-#define Velocidad_normal 250  // 120 
-#define Velocidad_maxima 250
+#define Velocidad_movimiento_seguir 255// 160 
+#define Velocidad_estandar 255 //180  
+#define Velocidad_normal 255  // 120 
+#define Velocidad_maxima 255
 
 #endif // DEFINICIONES_H
