@@ -10,6 +10,16 @@ const unsigned long AVANCE_INTERIOR_SIMPLE_MS = 140;
 const unsigned long AVANCE_INTERIOR_DOBLE_MS = 170;
 }
 
+// ------------------ Control remoto (nivel) ------------------
+bool robot_encendido = false;
+unsigned long ultimo_cambio_boton = 0;
+const unsigned long debounce_delay = 300;
+
+int estado_control_anterior = LOW;
+// Si tu receptor es activo-alto (START=1, STOP=0), true.
+// Si lo vieras invertido, pon false.
+const bool REMOTE_ACTIVE_HIGH = true;
+
 
 Robot::Robot() :
     motores(),
@@ -147,6 +157,7 @@ void Robot::ejecutarBusquedaCompacta(bool haciaDerecha, unsigned long tiempoEnCi
 
 void Robot::setup() {
     Serial.begin(9600);
+    pinMode(Pin_Control_Remoto, INPUT);
     pinMode(SENSOR_DE_PISO_IZQUIERDO, INPUT);
     pinMode(SENSOR_DE_PISO_DERECHO, INPUT);
     pinMode(SENSOR_FRONTAL_DERECHO, INPUT);
@@ -160,6 +171,12 @@ void Robot::setup() {
     pinMode(MA2B, OUTPUT);
     pinMode(MA1B, OUTPUT);
     pinMode(PWMB, OUTPUT);
+
+    // Estado inicial segun nivel del control remoto.
+    int lecturaInicial = digitalRead(Pin_Control_Remoto);
+    estado_control_anterior = lecturaInicial;
+    bool controlActivo = REMOTE_ACTIVE_HIGH ? (lecturaInicial == HIGH) : (lecturaInicial == LOW);
+    robot_encendido = controlActivo;
 }
 
 void Robot::detenerse() {
@@ -246,6 +263,32 @@ void Robot::sensoresLaterales(bool sensorIzquierdo, bool sensorDerecho) {
 }
 
 void Robot::loop() {
+    // ------------------ Control remoto (nivel + debounce) ------------------
+    const unsigned long ahoraControl = millis();
+    int lecturaControl = digitalRead(Pin_Control_Remoto);
+
+    if (lecturaControl != estado_control_anterior) {
+        estado_control_anterior = lecturaControl;
+        ultimo_cambio_boton = ahoraControl;
+
+        // Enciende inmediatamente al detectar Start, sin esperar debounce.
+        bool ahora_activo = REMOTE_ACTIVE_HIGH ? (lecturaControl == HIGH) : (lecturaControl == LOW);
+        if (ahora_activo) {
+            robot_encendido = true;
+        }
+    }
+
+    // Solo aplica debounce para apagar, evita cortes por ruido en la señal.
+    if ((ahoraControl - ultimo_cambio_boton) >= debounce_delay) {
+        bool controlActivo = REMOTE_ACTIVE_HIGH ? (lecturaControl == HIGH) : (lecturaControl == LOW);
+        robot_encendido = controlActivo;
+    }
+
+    if (!robot_encendido) {
+        detenerse();
+        return;
+    }
+
     static unsigned long ultimoContacto = 0;
     static bool busquedaDerecha = true;
     static unsigned long inicioPulsoBusqueda = 0;

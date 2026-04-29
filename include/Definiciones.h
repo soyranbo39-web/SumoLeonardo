@@ -27,11 +27,14 @@
 #define MA1B 8
 #define MA2B 12
 
+// Pin de control remoto
+const int Pin_Control_Remoto = A0; // Start=1, Stop=0
+
 // Parámetros
 #define BLANCO 120
-#define Velocidad_movimiento_seguir 255// 160 
-#define Velocidad_estandar 255 //180  
-#define Velocidad_normal 255  // 120 
-#define Velocidad_maxima 255
+#define Velocidad_movimiento_seguir 250// 160 
+#define Velocidad_estandar 250 //180  
+#define Velocidad_normal 250  // 120 
+#define Velocidad_maxima 250
 
 #endif // DEFINICIONES_H
