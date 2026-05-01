@@ -1,4 +1,5 @@
 #include "Robot.h"
+#include <EEPROM.h>
 
 namespace {
 const unsigned long RETROCESO_BORDE_SIMPLE_MS = 260;
@@ -7,6 +8,123 @@ const unsigned long GIRO_ESCAPE_BORDE_SIMPLE_MS = 220;
 const unsigned long GIRO_ESCAPE_BORDE_DOBLE_MS = 250;
 const unsigned long AVANCE_INTERIOR_SIMPLE_MS = 140;
 const unsigned long AVANCE_INTERIOR_DOBLE_MS = 170;
+
+const uint16_t QTABLE_EEPROM_MAGIC = 0x534C; // "SL"
+const uint8_t QTABLE_EEPROM_VERSION = 2;
+const int QTABLE_STATES = 32;
+const int QTABLE_ACTIONS = 6;
+const uint8_t QTABLE_PROFILE_COUNT = 3;
+const unsigned long QTABLE_GUARDADO_INTERVALO_MS = 15000;
+
+enum QTableProfile : uint8_t {
+    PROFILE_GENERAL = 0,
+    PROFILE_FRONTAL = 1,
+    PROFILE_LATERAL = 2
+};
+
+const unsigned long PERFIL_MUESTREO_MS = 1200;
+const int PERFIL_MARGEN_DECISION = 6;
+
+struct PerfilControl {
+    float kp;
+    float ki;
+    float kd;
+    uint8_t epsilonInicial;
+    unsigned long duracionesBusqueda[6];
+};
+
+const PerfilControl PERFIL_CONTROL[QTABLE_PROFILE_COUNT] = {
+    // GENERAL
+    {50.0f, 2.0f, 4.0f, 10, {780, 500, 780, 500, 520, 300}},
+    // FRONTAL
+    {56.0f, 2.5f, 4.5f, 8,  {700, 420, 700, 420, 470, 260}},
+    // LATERAL
+    {44.0f, 1.6f, 3.6f, 14, {860, 560, 860, 560, 590, 340}}
+};
+
+struct QTableHeader {
+    uint16_t magic;
+    uint8_t version;
+    uint8_t profileCount;
+};
+
+int qtableEepromHeaderAddress() {
+    return 0;
+}
+
+int qtableEepromDataAddress() {
+    return (int)sizeof(QTableHeader);
+}
+
+int qtableEepromProfileAddress(uint8_t profile) {
+    return qtableEepromDataAddress() + (int)profile * (int)sizeof(int8_t[QTABLE_STATES][QTABLE_ACTIONS]);
+}
+
+bool qtableHeaderValido(const QTableHeader &h) {
+    return h.magic == QTABLE_EEPROM_MAGIC &&
+           h.version == QTABLE_EEPROM_VERSION &&
+           h.profileCount == QTABLE_PROFILE_COUNT;
+}
+
+bool cargarQTableDesdeEEPROM(uint8_t profile, int8_t (&qtable)[QTABLE_STATES][QTABLE_ACTIONS]) {
+    if (profile >= QTABLE_PROFILE_COUNT) {
+        return false;
+    }
+
+    QTableHeader h;
+    EEPROM.get(qtableEepromHeaderAddress(), h);
+    if (!qtableHeaderValido(h)) {
+        return false;
+    }
+
+    EEPROM.get(qtableEepromProfileAddress(profile), qtable);
+    return true;
+}
+
+void guardarQTableEnEEPROM(uint8_t profile, const int8_t (&qtable)[QTABLE_STATES][QTABLE_ACTIONS]) {
+    if (profile >= QTABLE_PROFILE_COUNT) {
+        return;
+    }
+
+    const QTableHeader h = {QTABLE_EEPROM_MAGIC, QTABLE_EEPROM_VERSION, QTABLE_PROFILE_COUNT};
+    EEPROM.put(qtableEepromHeaderAddress(), h);
+    EEPROM.put(qtableEepromProfileAddress(profile), qtable);
+}
+
+void inicializarPerfilesQTableEnEEPROM(const int8_t (&qtableDefaults)[QTABLE_STATES][QTABLE_ACTIONS]) {
+    const QTableHeader h = {QTABLE_EEPROM_MAGIC, QTABLE_EEPROM_VERSION, QTABLE_PROFILE_COUNT};
+    EEPROM.put(qtableEepromHeaderAddress(), h);
+    for (uint8_t p = 0; p < QTABLE_PROFILE_COUNT; p++) {
+        EEPROM.put(qtableEepromProfileAddress(p), qtableDefaults);
+    }
+}
+
+uint8_t detectarPerfilOponenteInicio(SensorEnemigo &sensorFrontal,
+                                     SensorEnemigo &sensorFrontalIzq,
+                                     SensorEnemigo &sensorFrontalDer,
+                                     SensorEnemigo &sensorLateralIzq,
+                                     SensorEnemigo &sensorLateralDer) {
+    int frontalHits = 0;
+    int lateralHits = 0;
+
+    unsigned long t0 = millis();
+    while (millis() - t0 < PERFIL_MUESTREO_MS) {
+        const bool frontal = sensorFrontal.detectar() || sensorFrontalIzq.detectar() || sensorFrontalDer.detectar();
+        const bool lateral = sensorLateralIzq.detectar() || sensorLateralDer.detectar();
+
+        if (frontal) frontalHits++;
+        if (lateral) lateralHits++;
+        delay(10);
+    }
+
+    if (lateralHits > frontalHits + PERFIL_MARGEN_DECISION) {
+        return PROFILE_LATERAL;
+    }
+    if (frontalHits > lateralHits + PERFIL_MARGEN_DECISION) {
+        return PROFILE_FRONTAL;
+    }
+    return PROFILE_GENERAL;
+}
 }
 
 // ------------------ Control remoto (nivel) ------------------
@@ -299,6 +417,16 @@ static const int8_t QTABLE_DEFAULTS[32][6] = {
 void Robot::loop() {
     // ------------------ Control remoto (nivel + debounce) ------------------
     static bool estadoAnteriorEncendido = false;
+    static bool qtableGuardadaEnApagado = false;
+    static bool qtableSucia = false;
+    static unsigned long ultimoGuardadoQMs = 0;
+    static uint8_t perfilQActivo = PROFILE_GENERAL;
+    static float kpPidActual = 50.0f;
+    static float kiPidActual = 2.0f;
+    static float kdPidActual = 4.0f;
+    static uint8_t epsilonPct = 10;
+    static unsigned long ultimoDecayEpsilonMs = 0;
+    static unsigned long duracionesBusqueda[6] = {780, 500, 780, 500, 520, 300};
     static bool busquedaDerecha = true;
     static uint8_t faseBusqueda = 0;
     static unsigned long inicioFaseBusqueda = 0;
@@ -320,11 +448,31 @@ void Robot::loop() {
     static int8_t qtable[32][6];
     static bool qtableIniciada = false;
     if (!qtableIniciada) {
-        memcpy(qtable, QTABLE_DEFAULTS, sizeof(qtable));
+        QTableHeader h;
+        EEPROM.get(qtableEepromHeaderAddress(), h);
+        if (!qtableHeaderValido(h)) {
+            inicializarPerfilesQTableEnEEPROM(QTABLE_DEFAULTS);
+        }
+
+        if (!cargarQTableDesdeEEPROM(PROFILE_GENERAL, qtable)) {
+            memcpy(qtable, QTABLE_DEFAULTS, sizeof(qtable));
+            guardarQTableEnEEPROM(PROFILE_GENERAL, qtable);
+        }
+
+        perfilQActivo = PROFILE_GENERAL;
+        kpPidActual = PERFIL_CONTROL[perfilQActivo].kp;
+        kiPidActual = PERFIL_CONTROL[perfilQActivo].ki;
+        kdPidActual = PERFIL_CONTROL[perfilQActivo].kd;
+        epsilonPct = PERFIL_CONTROL[perfilQActivo].epsilonInicial;
+        memcpy(duracionesBusqueda, PERFIL_CONTROL[perfilQActivo].duracionesBusqueda, sizeof(duracionesBusqueda));
+        qtableSucia = false;
+        ultimoGuardadoQMs = millis();
+        ultimoDecayEpsilonMs = millis();
         qtableIniciada = true;
     }
     static uint8_t estadoPrev = 0;
     static uint8_t accionPrev = 5;
+    static uint8_t rachaSinEnemigo = 0;
     // PID angular: error = posicion angular del enemigo [-4,+4], salida = diferencial de motores
     static float pidIntegral  = 0.0f;
     static float pidPrevError = 0.0f;
@@ -356,6 +504,13 @@ void Robot::loop() {
     const bool recienEncendido = (!estadoAnteriorEncendido && robot_encendido);
 
     if (!robot_encendido) {
+        if (!qtableGuardadaEnApagado && qtableSucia) {
+            guardarQTableEnEEPROM(perfilQActivo, qtable);
+            qtableGuardadaEnApagado = true;
+            qtableSucia = false;
+            ultimoGuardadoQMs = ahoraControl;
+        }
+
         // Reset inmediato de busqueda al apagar, para que arranque limpio.
         busquedaDerecha = true;
         faseBusqueda = 0;
@@ -368,6 +523,7 @@ void Robot::loop() {
     }
 
     estadoAnteriorEncendido = true;
+    qtableGuardadaEnApagado = false;
 
     if (recienEncendido) {
         // Arranque limpio de busqueda y sensores al pasar de OFF->ON.
@@ -390,7 +546,28 @@ void Robot::loop() {
         tAngPrev       = 0;
         estadoPrev = 0;
         accionPrev = 5;
-        memcpy(qtable, QTABLE_DEFAULTS, sizeof(qtable));
+        perfilQActivo = detectarPerfilOponenteInicio(
+            sensorFrontal,
+            sensorFrontalIzq,
+            sensorFrontalDer,
+            sensorLateralIzq,
+            sensorLateralDer
+        );
+
+        if (!cargarQTableDesdeEEPROM(perfilQActivo, qtable)) {
+            memcpy(qtable, QTABLE_DEFAULTS, sizeof(qtable));
+            guardarQTableEnEEPROM(perfilQActivo, qtable);
+        }
+        kpPidActual = PERFIL_CONTROL[perfilQActivo].kp;
+        kiPidActual = PERFIL_CONTROL[perfilQActivo].ki;
+        kdPidActual = PERFIL_CONTROL[perfilQActivo].kd;
+        epsilonPct = PERFIL_CONTROL[perfilQActivo].epsilonInicial;
+        memcpy(duracionesBusqueda, PERFIL_CONTROL[perfilQActivo].duracionesBusqueda, sizeof(duracionesBusqueda));
+        rachaSinEnemigo = 0;
+        qtableSucia = false;
+        ultimoGuardadoQMs = ahoraControl;
+        ultimoDecayEpsilonMs = ahoraControl;
+        randomSeed(micros() ^ (unsigned long)analogRead(SENSOR_DE_PISO_IZQUIERDO));
         busquedaActiva = false;
     }
 
@@ -457,9 +634,6 @@ void Robot::loop() {
     float anguloPred = angulo + velAngular * 80.0f;
 
     // --- PID angular: diferencial de velocidad para centrar al enemigo ---
-    const float KP_PID = 50.0f;
-    const float KI_PID =  2.0f;
-    const float KD_PID =  4.0f;
     {
         float dtPidMs = (float)(ahora - pidTmsAnt);
         if (dtPidMs > 0.0f && dtPidMs < 100.0f) {
@@ -468,7 +642,7 @@ void Robot::loop() {
             if (pidIntegral >  3.0f) pidIntegral =  3.0f;
             if (pidIntegral < -3.0f) pidIntegral = -3.0f;
             float deriv = (anguloPred - pidPrevError) / dtS;
-            pidSalida = KP_PID * anguloPred + KI_PID * pidIntegral + KD_PID * deriv;
+            pidSalida = kpPidActual * anguloPred + kiPidActual * pidIntegral + kdPidActual * deriv;
         }
         pidPrevError = anguloPred;
         pidTmsAnt    = ahora;
@@ -482,13 +656,41 @@ void Robot::loop() {
     if (LateralDer)     estadoQ |= 0x08;
     if (LateralIzq)     estadoQ |= 0x10;
 
+    if (estadoQ == 0) {
+        if (rachaSinEnemigo < 250) rachaSinEnemigo++;
+    } else {
+        rachaSinEnemigo = 0;
+    }
+
     // Actualiza Q-tabla con resultado de la iteracion anterior (Bellman / online).
     {
-        int8_t recompensa = (PisoIzq || PisoDer) ? -20 : (estadoQ != 0 ? 5 : 0);
+        int recompensa = 0;
+        if (PisoIzq || PisoDer) {
+            recompensa = -25;
+        } else {
+            recompensa += (estadoQ != 0) ? 3 : -1;
+
+            const float absAnguloPred = fabs(anguloPred);
+            if (estadoQ != 0 && absAnguloPred <= 0.8f) {
+                recompensa += 3;
+            } else if (estadoQ != 0 && absAnguloPred <= 1.8f) {
+                recompensa += 1;
+            }
+
+            recompensa -= (int)(rachaSinEnemigo / 6);
+            if (accionPrev >= 1 && accionPrev <= 4 && rachaSinEnemigo > 8) {
+                recompensa -= 2;
+            }
+        }
+
+        if (recompensa > 20) recompensa = 20;
+        if (recompensa < -30) recompensa = -30;
+
         int8_t maxQNuevo  = qtable[estadoQ][0];
         for (uint8_t a = 1; a < 6; a++) {
             if (qtable[estadoQ][a] > maxQNuevo) maxQNuevo = qtable[estadoQ][a];
         }
+        const int8_t qAnterior = qtable[estadoPrev][accionPrev];
         float qUpd = (float)qtable[estadoPrev][accionPrev]
                    + 0.15f * ((float)recompensa + 0.9f * (float)maxQNuevo
                               - (float)qtable[estadoPrev][accionPrev]);
@@ -496,6 +698,9 @@ void Robot::loop() {
         if (qC >  120) qC =  120;
         if (qC < -100) qC = -100;
         qtable[estadoPrev][accionPrev] = (int8_t)qC;
+        if (qtable[estadoPrev][accionPrev] != qAnterior) {
+            qtableSucia = true;
+        }
     }
 
     // Selecciona la accion con mayor Q-valor.
@@ -510,6 +715,21 @@ void Robot::loop() {
         }
     }
 
+    // Exploracion epsilon-greedy (solo cuando hay enemigo detectado).
+    if (estadoQ != 0 && epsilonPct > 0) {
+        if ((uint8_t)random(100) < epsilonPct) {
+            accionQ = (uint8_t)random(5);
+        }
+    }
+
+    // Decaimiento suave de epsilon para estabilizar estrategia durante el combate.
+    if ((ahora - ultimoDecayEpsilonMs) >= 250) {
+        ultimoDecayEpsilonMs = ahora;
+        if (epsilonPct > 2) {
+            epsilonPct--;
+        }
+    }
+
     // Sin enemigo detectado, ejecuta siempre la busqueda clasica por fases.
     if (estadoQ == 0) {
         accionQ = 5;
@@ -517,6 +737,13 @@ void Robot::loop() {
 
     estadoPrev = estadoQ;
     accionPrev = accionQ;
+
+    // Guardado periodico para reducir perdida de aprendizaje sin castigar EEPROM.
+    if (qtableSucia && (ahora - ultimoGuardadoQMs >= QTABLE_GUARDADO_INTERVALO_MS)) {
+        guardarQTableEnEEPROM(perfilQActivo, qtable);
+        qtableSucia = false;
+        ultimoGuardadoQMs = ahora;
+    }
 
     // --- Ejecucion: piso tiene prioridad absoluta (seguridad), Q-tabla gestiona el resto ---
     if (PisoIzq || PisoDer) {
@@ -576,11 +803,7 @@ void Robot::loop() {
                     inicioFaseBusqueda = ahora;
                 }
 
-                const unsigned long duraciones[6] = {
-                    780, 500, 780, 500, 520, 300
-                };
-
-                if ((ahora - inicioFaseBusqueda) >= duraciones[faseBusqueda]) {
+                if ((ahora - inicioFaseBusqueda) >= duracionesBusqueda[faseBusqueda]) {
                     inicioFaseBusqueda = ahora;
                     faseBusqueda = (faseBusqueda + 1) % 6;
                     if (faseBusqueda == 0) busquedaDerecha = !busquedaDerecha;
