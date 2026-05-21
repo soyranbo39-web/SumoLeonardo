@@ -20,7 +20,35 @@ void setLedsMovimiento(bool txOn, bool rxOn) {
 }
 } 
 
-// movimientos basicos de un motor
+void Motores::derecha(int velocidad) {
+    // Giro pivote: solo avanza la izquierda
+    motorIzq.avanzar(velocidad);
+    motorDer.detener();
+    setLedsMovimiento(true, false);
+}
+
+void Motores::izquierda(int velocidad) {
+    // Giro pivote: solo avanza la derecha
+    motorIzq.detener();
+    motorDer.avanzar(velocidad);
+    setLedsMovimiento(false, true);
+}
+
+void Motores::curvaDerecha(int velocidad) {
+    // Curva pivote: solo avanza la izquierda
+    motorIzq.avanzar(velocidad);
+    motorDer.detener();
+    setLedsMovimiento(true, false);
+}
+
+void Motores::curvaIzquierda(int velocidad) {
+    // Curva pivote: solo avanza la derecha
+    motorIzq.detener();
+    motorDer.avanzar(velocidad);
+    setLedsMovimiento(false, true);
+}
+
+// Implementación de Motor
 Motor::Motor(int a1, int a2, int pwm) : pinA1(a1), pinA2(a2), pinPWM(pwm) {}
 
 void Motor::avanzar(int velocidad) {
@@ -62,30 +90,6 @@ void Motores::detener() {
     motorIzq.detener();
     motorDer.detener();
     setLedsMovimiento(false, false);
-}
-
-void Motores::derecha(int velocidad) {
-    motorIzq.avanzar(velocidad);
-    motorDer.retroceder(velocidad);
-    setLedsMovimiento(true, true);
-}
-
-void Motores::izquierda(int velocidad) {
-    motorIzq.retroceder(velocidad);
-    motorDer.avanzar(velocidad);
-    setLedsMovimiento(false, true);
-}
-
-void Motores::curvaDerecha(int velocidad) {
-    motorIzq.avanzar(velocidad);
-    motorDer.detener();
-    setLedsMovimiento(true, false);
-}
-
-void Motores::curvaIzquierda(int velocidad) {
-    motorIzq.detener();
-    motorDer.avanzar(velocidad);
-    setLedsMovimiento(false, true);
 }
 
 Motor& Motores::getIzquierdo() {

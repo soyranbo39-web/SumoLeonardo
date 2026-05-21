@@ -28,6 +28,7 @@ public:
     void retroceder();
     void moverDerecha();
     void moverIzquierda();
+        void giroEscapeCompleto(bool haciaDerecha, unsigned long duracionMs); // Declarar el método giroEscapeCompleto
     void sensoresPiso(bool pisoIzq, bool pisoDer);
     void sensoresFrontales(bool central, bool derecho, bool izquierdo);
     void sensoresLaterales(bool sensorIzquierdo, bool sensorDerecho);

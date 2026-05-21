@@ -10,7 +10,7 @@
 #define S_LAT_IZQ    1
 #define S_LAT_DER    A4
 
-// Compatibilidad con nombres anteriores
+#define BLANCO 120 // Refuerzo: más sensible a blanco
 #define SENSOR_DE_PISO_IZQUIERDO  S_PISO_IZQ
 #define SENSOR_DE_PISO_DERECHO    S_PISO_DER
 #define SENSOR_FRONTAL_CENTRA     S_FRONT_CEN
@@ -31,11 +31,14 @@
 const int Pin_Control_Remoto = A0; // Start=1, Stop=0
 
 // Parámetros
-#define BLANCO 120
 #define Velocidad_movimiento_seguir 160 
 #define Velocidad_estandar 180  
 #define Velocidad_normal 120 
 #define Velocidad_maxima 200
-#define Velocidad_baja 150 
+#define Velocidad_borde 120
+#define Velocidad_maxima_Ataque 220
+#define REMOTE_ACTIVE_HIGH true
+// Variable global para el estado del borde
+// (declarada solo en Robot.cpp)
 
 #endif // DEFINICIONES_H
