@@ -32,9 +32,9 @@ const int Pin_Control_Remoto = A0; // Start=1, Stop=0
 
 // Parámetros
 #define BLANCO 120
-#define Velocidad_movimiento_seguir 200// 160 
-#define Velocidad_estandar 200 //180  
-#define Velocidad_normal 200  // 120 
+#define Velocidad_movimiento_seguir 160 
+#define Velocidad_estandar 180  
+#define Velocidad_normal 120 
 #define Velocidad_maxima 200
 
 #endif // DEFINICIONES_H
