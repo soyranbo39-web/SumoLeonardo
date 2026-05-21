@@ -99,32 +99,6 @@ void inicializarPerfilesQTableEnEEPROM(const int8_t (&qtableDefaults)[QTABLE_STA
     }
 }
 
-uint8_t detectarPerfilOponenteInicio(SensorEnemigo &sensorFrontal,
-                                     SensorEnemigo &sensorFrontalIzq,
-                                     SensorEnemigo &sensorFrontalDer,
-                                     SensorEnemigo &sensorLateralIzq,
-                                     SensorEnemigo &sensorLateralDer) {
-    int frontalHits = 0;
-    int lateralHits = 0;
-
-    unsigned long t0 = millis();
-    while (millis() - t0 < PERFIL_MUESTREO_MS) {
-        const bool frontal = sensorFrontal.detectar() || sensorFrontalIzq.detectar() || sensorFrontalDer.detectar();
-        const bool lateral = sensorLateralIzq.detectar() || sensorLateralDer.detectar();
-
-        if (frontal) frontalHits++;
-        if (lateral) lateralHits++;
-        delay(10);
-    }
-
-    if (lateralHits > frontalHits + PERFIL_MARGEN_DECISION) {
-        return PROFILE_LATERAL;
-    }
-    if (frontalHits > lateralHits + PERFIL_MARGEN_DECISION) {
-        return PROFILE_FRONTAL;
-    }
-    return PROFILE_GENERAL;
-}
 }
 
 // ------------------ Control remoto (nivel) ------------------
@@ -288,11 +262,9 @@ void Robot::setup() {
     pinMode(MA1B, OUTPUT);
     pinMode(PWMB, OUTPUT);
 
-    // Estado inicial segun nivel del control remoto.
-    int lecturaInicial = digitalRead(Pin_Control_Remoto);
-    estado_control_anterior = lecturaInicial;
-    bool controlActivo = REMOTE_ACTIVE_HIGH ? (lecturaInicial == HIGH) : (lecturaInicial == LOW);
-    robot_encendido = controlActivo;
+    // Ya no se usa control remoto para encendido.
+    estado_control_anterior = LOW;
+    robot_encendido = true;
 }
 
 void Robot::detenerse() {
@@ -416,8 +388,6 @@ static const int8_t QTABLE_DEFAULTS[32][6] = {
 
 void Robot::loop() {
     // ------------------ Control remoto (nivel + debounce) ------------------
-    static bool estadoAnteriorEncendido = false;
-    static bool qtableGuardadaEnApagado = false;
     static bool qtableSucia = false;
     static unsigned long ultimoGuardadoQMs = 0;
     static uint8_t perfilQActivo = PROFILE_GENERAL;
@@ -483,50 +453,21 @@ void Robot::loop() {
     static float velAngular       = 0.0f;
     static unsigned long tAngPrev = 0;
 
-    const unsigned long ahoraControl = millis();
-    int lecturaControl = digitalRead(Pin_Control_Remoto);
+    const unsigned long ahora = millis();
+    // Leer sensores de piso para rutina inicial y lógica general
+    int valorPisoIzq = analogRead(SENSOR_DE_PISO_IZQUIERDO);
+    int valorPisoDer = analogRead(SENSOR_DE_PISO_DERECHO);
+    bool PisoIzq = (valorPisoIzq <= (float)BLANCO);
+    bool PisoDer = (valorPisoDer <= (float)BLANCO);
 
-    if (lecturaControl != estado_control_anterior) {
-        estado_control_anterior = lecturaControl;
-        ultimo_cambio_boton = ahoraControl;
-
-        // Cambia de estado inmediatamente en flancos del control remoto.
-        bool ahora_activo = REMOTE_ACTIVE_HIGH ? (lecturaControl == HIGH) : (lecturaControl == LOW);
-        robot_encendido = ahora_activo;
-    }
-
-    // Solo aplica debounce para apagar, evita cortes por ruido en la señal.
-    if ((ahoraControl - ultimo_cambio_boton) >= debounce_delay) {
-        bool controlActivo = REMOTE_ACTIVE_HIGH ? (lecturaControl == HIGH) : (lecturaControl == LOW);
-        robot_encendido = controlActivo;
-    }
-
-    const bool recienEncendido = (!estadoAnteriorEncendido && robot_encendido);
-
-    if (!robot_encendido) {
-        if (!qtableGuardadaEnApagado && qtableSucia) {
-            guardarQTableEnEEPROM(perfilQActivo, qtable);
-            qtableGuardadaEnApagado = true;
-            qtableSucia = false;
-            ultimoGuardadoQMs = ahoraControl;
-        }
-
-        // Reset inmediato de busqueda al apagar, para que arranque limpio.
-        busquedaDerecha = true;
-        faseBusqueda = 0;
-        inicioFaseBusqueda = 0;
-        busquedaActiva = false;
-
-        detenerse();
-        estadoAnteriorEncendido = false;
-        return;
-    }
-
-    estadoAnteriorEncendido = true;
-    qtableGuardadaEnApagado = false;
-
-    if (recienEncendido) {
-        // Arranque limpio de busqueda y sensores al pasar de OFF->ON.
+    // Rutina inicial siempre se ejecuta al arranque
+    static bool rutinaInicialCompletada = false;
+    static bool rutinaInicialEnCurso = true;
+    static bool rutinaDetectoBorde = false;
+    static unsigned long rutinaEvasionMs = 0;
+    static bool rutinaInicializada = false;
+    if (!rutinaInicializada) {
+        // Inicializa variables de rutina inicial
         faseBusqueda = 0;
         inicioFaseBusqueda = 0;
         busquedaDerecha = true;
@@ -546,40 +487,51 @@ void Robot::loop() {
         tAngPrev       = 0;
         estadoPrev = 0;
         accionPrev = 5;
-        perfilQActivo = detectarPerfilOponenteInicio(
-            sensorFrontal,
-            sensorFrontalIzq,
-            sensorFrontalDer,
-            sensorLateralIzq,
-            sensorLateralDer
-        );
-
-        if (!cargarQTableDesdeEEPROM(perfilQActivo, qtable)) {
-            memcpy(qtable, QTABLE_DEFAULTS, sizeof(qtable));
-            guardarQTableEnEEPROM(perfilQActivo, qtable);
-        }
-        kpPidActual = PERFIL_CONTROL[perfilQActivo].kp;
-        kiPidActual = PERFIL_CONTROL[perfilQActivo].ki;
-        kdPidActual = PERFIL_CONTROL[perfilQActivo].kd;
-        epsilonPct = PERFIL_CONTROL[perfilQActivo].epsilonInicial;
-        memcpy(duracionesBusqueda, PERFIL_CONTROL[perfilQActivo].duracionesBusqueda, sizeof(duracionesBusqueda));
         rachaSinEnemigo = 0;
-        qtableSucia = false;
-        ultimoGuardadoQMs = ahoraControl;
-        ultimoDecayEpsilonMs = ahoraControl;
-        randomSeed(micros() ^ (unsigned long)analogRead(SENSOR_DE_PISO_IZQUIERDO));
         busquedaActiva = false;
+        rutinaInicialCompletada = false;
+        rutinaInicialEnCurso = true;
+        rutinaDetectoBorde = false;
+        rutinaEvasionMs = 0;
+        rutinaInicializada = true;
     }
 
-    const unsigned long ahora = millis();
+    // Rutina inicial reforzada: avanzar lento hasta tocar borde, luego retroceder y girar con tiempos notorios
+    if (!rutinaInicialCompletada && rutinaInicialEnCurso) {
+        if (!rutinaDetectoBorde) {
+            // Avanza muy lento hasta detectar borde
+            motores.adelante(Velocidad_baja); // Usa velocidad baja para mayor control
+            if (PisoIzq || PisoDer) {
+                rutinaDetectoBorde = true;
+                rutinaEvasionMs = ahora;
+                // Retrocede fuerte al detectar borde
+                motores.retroceder(Velocidad_estandar);
+            }
+            return; // Bloquea toda la lógica normal
+        } else {
+            // Evasión: retrocede 700ms, luego gira 600ms
+            if (ahora - rutinaEvasionMs < 700) {
+                motores.retroceder(Velocidad_estandar);
+                return;
+            } else if (ahora - rutinaEvasionMs < 1300) {
+                motores.derecha(Velocidad_estandar);
+                return;
+            } else {
+                motores.detener();
+                rutinaInicialCompletada = true;
+                rutinaInicialEnCurso = false;
+                // Espera un ciclo antes de activar lógica normal
+                return;
+            }
+        }
+    }
+
+    // (Eliminada segunda declaración redundante de 'ahora')
 
     // --- Kalman 1D para sensores de piso (analogicos) ---
     // Suaviza ruido electrico y vibracion para evitar falsas detecciones de borde.
     const float KF_Q = 8.0f;   // ruido de proceso
     const float KF_R = 25.0f;  // ruido de medicion
-
-    int valorPisoIzq = analogRead(SENSOR_DE_PISO_IZQUIERDO);
-    int valorPisoDer = analogRead(SENSOR_DE_PISO_DERECHO);
 
     kfPisoIzqP += KF_Q;
     float K_izq = kfPisoIzqP / (kfPisoIzqP + KF_R);
@@ -591,8 +543,7 @@ void Robot::loop() {
     kfPisoDerX += K_der * ((float)valorPisoDer - kfPisoDerX);
     kfPisoDerP *= (1.0f - K_der);
 
-    bool PisoIzq = (kfPisoIzqX <= (float)BLANCO);
-    bool PisoDer = (kfPisoDerX <= (float)BLANCO);
+    // PisoIzq y PisoDer ya calculados arriba para rutina inicial
 
     // --- Filtro de confianza para sensores de enemigo (digitales) ---
     // +2 al detectar (respuesta rapida), -1 sin deteccion (histeresis).
@@ -609,8 +560,7 @@ void Robot::loop() {
     bool LateralDer     = (confLateralDer     >= 2);
     bool LateralIzq     = (confLateralIzq     >= 2);
 
-    const bool enemigoDetectado = FrontalDer || FrontalIzq || FrontalCentral || LateralDer || LateralIzq;
-    (void)enemigoDetectado;
+    // ...existing code...
 
     // --- Posicion angular del enemigo estimada desde valores de confianza [-4, +4] ---
     float totalConf = (float)(confFrontalDer + confFrontalIzq + confFrontalCentral +
@@ -655,6 +605,26 @@ void Robot::loop() {
     if (FrontalCentral) estadoQ |= 0x04;
     if (LateralDer)     estadoQ |= 0x08;
     if (LateralIzq)     estadoQ |= 0x10;
+
+    // Persistencia de ataque: sigue atacando hasta 1200 ms después de perder al enemigo
+    static unsigned long ultimoEnemigoDetectadoMs = 0;
+    static bool persistirAtaque = false;
+    const unsigned long persistenciaAtaqueMs = 1200;
+
+    const bool enemigoDetectadoAhora = (estadoQ != 0);
+    if (enemigoDetectadoAhora) {
+        ultimoEnemigoDetectadoMs = ahora;
+        persistirAtaque = true;
+    } else if (persistirAtaque && (ahora - ultimoEnemigoDetectadoMs > persistenciaAtaqueMs)) {
+        persistirAtaque = false;
+    }
+
+    // Si está en persistencia de ataque, fuerza estadoQ distinto de cero
+    uint8_t estadoQ_persistente = estadoQ;
+    if (persistirAtaque && estadoQ == 0) {
+        // Mantiene el último estado de ataque (por defecto, frontal)
+        estadoQ_persistente = 0x04; // FrontalCentral
+    }
 
     if (estadoQ == 0) {
         if (rachaSinEnemigo < 250) rachaSinEnemigo++;
@@ -715,8 +685,8 @@ void Robot::loop() {
         }
     }
 
-    // Exploracion epsilon-greedy (solo cuando hay enemigo detectado).
-    if (estadoQ != 0 && epsilonPct > 0) {
+    // Exploracion epsilon-greedy (solo cuando hay enemigo detectado o persistencia de ataque).
+    if (estadoQ_persistente != 0 && epsilonPct > 0) {
         if ((uint8_t)random(100) < epsilonPct) {
             accionQ = (uint8_t)random(5);
         }
@@ -730,12 +700,12 @@ void Robot::loop() {
         }
     }
 
-    // Sin enemigo detectado, ejecuta siempre la busqueda clasica por fases.
-    if (estadoQ == 0) {
+    // Sin enemigo detectado ni persistencia, ejecuta búsqueda; si hay persistencia, sigue atacando
+    if (estadoQ_persistente == 0) {
         accionQ = 5;
     }
 
-    estadoPrev = estadoQ;
+    estadoPrev = estadoQ_persistente;
     accionPrev = accionQ;
 
     // Guardado periodico para reducir perdida de aprendizaje sin castigar EEPROM.

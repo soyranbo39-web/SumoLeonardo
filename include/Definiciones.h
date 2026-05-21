@@ -36,5 +36,6 @@ const int Pin_Control_Remoto = A0; // Start=1, Stop=0
 #define Velocidad_estandar 180  
 #define Velocidad_normal 120 
 #define Velocidad_maxima 200
+#define Velocidad_baja 150 
 
 #endif // DEFINICIONES_H
