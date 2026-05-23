@@ -11,10 +11,21 @@
 #include "DetectorAtascos.h"
 #include "AtaqueAdaptativo.h"
 #include "Telemetria.h"
+#include "EstrategiasDinamicas.h"
+#include "AprendizajeSimple.h"
+#include "ReconocimientoPatrones.h"
+#include "EnganoSumo.h"
+#include "Autodiagnostico.h"
+
 
 BusquedaAvanzada busquedaAvanzada;
 DetectorAtascos detectorAtascos;
 AtaqueAdaptativo ataqueAdaptativo;
+EstrategiasDinamicas estrategiasDinamicas;
+AprendizajeSimple aprendizajeSimple;
+ReconocimientoPatrones reconocimientoPatrones;
+EnganoSumo enganoSumo;
+Autodiagnostico autodiagnostico;
 
 Robot::Robot()
 		: sensorPisoIzq(S_PISO_IZQ, BLANCO),
@@ -75,6 +86,15 @@ void Robot::sensoresFrontales(bool central, bool derecho, bool izquierdo) {}
 void Robot::sensoresLaterales(bool sensorIzquierdo, bool sensorDerecho) {}
 
 void Robot::loop() {
+	// Auto-diagnóstico antes de cualquier acción
+	autodiagnostico.checarSensores();
+	autodiagnostico.checarMotores();
+	if (autodiagnostico.hayFallo()) {
+		Telemetria::logAccion("Fallo detectado: modo seguro");
+		motores.detener();
+		return;
+	}
+
 	bool pisoIzq = sensorPisoIzq.detectar();
 	bool pisoDer = sensorPisoDer.detectar();
 	bool enemigoFrontal = sensorFrontal.detectar();
@@ -94,6 +114,20 @@ void Robot::loop() {
 		return;
 	}
 
+	// Reconocimiento de patrones de movimiento enemigo
+	if (enemigoIzq) reconocimientoPatrones.registrarMovimientoEnemigo(0);
+	else if (enemigoFrontal) reconocimientoPatrones.registrarMovimientoEnemigo(1);
+	else if (enemigoDer) reconocimientoPatrones.registrarMovimientoEnemigo(2);
+
+	// Estrategias dinámicas según rival
+	estrategiasDinamicas.actualizar(false, enemigoLatIzq || enemigoLatDer, enemigoFrontal);
+
+	// Ejemplo de uso de engaño: si el patrón predicho es frontal, hacer una finta
+	int prediccion = reconocimientoPatrones.predecirSiguienteMovimiento();
+	if (prediccion == 1 && !enemigoFrontal && !enemigoIzq && !enemigoDer) {
+		enganoSumo.fintarRetroceso();
+	}
+
 	EstrategiasBusqueda estrategia;
 
 	// 1. Prioridad máxima: evitar el borde
@@ -102,12 +136,15 @@ void Robot::loop() {
 		return;
 	}
 
-	// 2. Si detecta enemigo en cualquier sensor, ataque adaptativo
+	// 2. Si detecta enemigo en cualquier sensor, ataque adaptativo y aprendizaje
 	if (enemigoFrontal || enemigoIzq || enemigoDer || enemigoLatIzq || enemigoLatDer) {
 		ataqueAdaptativo.atacar(enemigoFrontal, enemigoIzq, enemigoDer, enemigoLatIzq, enemigoLatDer);
+		aprendizajeSimple.registrarResultado(true); // Suponiendo éxito en ataque
+		estrategiasDinamicas.aplicarEstrategia();
 		return;
 	}
 
-	// 3. Si no detecta enemigo ni borde, búsqueda avanzada
+	// 3. Si no detecta enemigo ni borde, búsqueda avanzada y aprendizaje
 	busquedaAvanzada.ejecutar();
+	aprendizajeSimple.registrarResultado(false); // Suponiendo fallo en encontrar enemigo
 }
