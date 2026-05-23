@@ -1,5 +1,7 @@
+
 #ifndef DEFINICIONES_H
 #define DEFINICIONES_H
+#include <Arduino.h>
 
 // Pines de sensores
 #define S_PISO_IZQ   A1

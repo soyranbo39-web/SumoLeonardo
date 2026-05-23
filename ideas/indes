@@ -7,14 +7,6 @@
 #include "SensorPiso.h"
 #include "SensorEnemigo.h"
 #include "EstrategiasBusqueda.h"
-#include "BusquedaAvanzada.h"
-#include "DetectorAtascos.h"
-#include "AtaqueAdaptativo.h"
-#include "Telemetria.h"
-
-BusquedaAvanzada busquedaAvanzada;
-DetectorAtascos detectorAtascos;
-AtaqueAdaptativo ataqueAdaptativo;
 
 Robot::Robot()
 		: sensorPisoIzq(S_PISO_IZQ, BLANCO),
@@ -83,17 +75,6 @@ void Robot::loop() {
 	bool enemigoLatIzq = sensorLateralIzq.detectar();
 	bool enemigoLatDer = sensorLateralDer.detectar();
 
-	Telemetria::logEstadoSensores(pisoIzq, pisoDer, enemigoFrontal, enemigoIzq, enemigoDer, enemigoLatIzq, enemigoLatDer);
-
-	// Detección de atascos
-	bool movimiento = !(pisoIzq || pisoDer);
-	detectorAtascos.actualizar(movimiento, enemigoFrontal || enemigoIzq || enemigoDer || enemigoLatIzq || enemigoLatDer, pisoIzq || pisoDer);
-	if (detectorAtascos.estaAtascado()) {
-		Telemetria::logAccion("Atasco detectado");
-		detectorAtascos.resolverAtasco();
-		return;
-	}
-
 	EstrategiasBusqueda estrategia;
 
 	// 1. Prioridad máxima: evitar el borde
@@ -102,12 +83,12 @@ void Robot::loop() {
 		return;
 	}
 
-	// 2. Si detecta enemigo en cualquier sensor, ataque adaptativo
+	// 2. Si detecta enemigo en cualquier sensor, atacar
 	if (enemigoFrontal || enemigoIzq || enemigoDer || enemigoLatIzq || enemigoLatDer) {
-		ataqueAdaptativo.atacar(enemigoFrontal, enemigoIzq, enemigoDer, enemigoLatIzq, enemigoLatDer);
+		ataqueEnemigo();
 		return;
 	}
 
-	// 3. Si no detecta enemigo ni borde, búsqueda avanzada
-	busquedaAvanzada.ejecutar();
+	// 3. Si no detecta enemigo ni borde, buscar enemigo
+	estrategia.busquedaEnemigo();
 }
