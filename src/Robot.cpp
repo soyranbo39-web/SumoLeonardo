@@ -157,7 +157,7 @@ void Robot::ejecutarBusquedaCompacta(bool haciaDerecha, unsigned long tiempoEnCi
 
 void Robot::setup() {
     Serial.begin(9600);
-    pinMode(Pin_Control_Remoto, INPUT);
+    pinMode(Pin_Control_Remoto, INPUT_PULLUP);
     pinMode(SENSOR_DE_PISO_IZQUIERDO, INPUT);
     pinMode(SENSOR_DE_PISO_DERECHO, INPUT);
     pinMode(SENSOR_FRONTAL_DERECHO, INPUT);
@@ -172,7 +172,7 @@ void Robot::setup() {
     pinMode(MA1B, OUTPUT);
     pinMode(PWMB, OUTPUT);
 
-    // Estado inicial segun nivel del control remoto.
+    // Sin arrancador externo, el pull-up interno deja el robot listo para arrancar.
     int lecturaInicial = digitalRead(Pin_Control_Remoto);
     estado_control_anterior = lecturaInicial;
     bool controlActivo = REMOTE_ACTIVE_HIGH ? (lecturaInicial == HIGH) : (lecturaInicial == LOW);
