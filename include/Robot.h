@@ -14,6 +14,7 @@ class Robot {
     bool leerPiso(bool &pisoIzq, bool &pisoDer);
     bool esperarConPrioridadPiso(unsigned long duracionMs);
     bool enemigoVistoRapido();
+    bool puedePerseguirDuranteEvasion();
     bool esperarConPrioridadPisoYEnemigo(unsigned long duracionMs);
     void retrocesoSeguro(unsigned long duracionMs);
     void giroEscapeSeguro(bool haciaDerecha, unsigned long duracionMs);

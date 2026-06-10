@@ -60,6 +60,16 @@ bool Robot::enemigoVistoRapido() {
            sensorLateralIzq.detectar();
 }
 
+bool Robot::puedePerseguirDuranteEvasion() {
+    bool pisoIzq = false;
+    bool pisoDer = false;
+    if (leerPiso(pisoIzq, pisoDer)) {
+        return false;
+    }
+
+    return enemigoVistoRapido();
+}
+
 bool Robot::esperarConPrioridadPisoYEnemigo(unsigned long duracionMs) {
     unsigned long inicio = millis();
     while (millis() - inicio < duracionMs) {
@@ -79,9 +89,15 @@ bool Robot::esperarConPrioridadPisoYEnemigo(unsigned long duracionMs) {
 }
 
 void Robot::retrocesoSeguro(unsigned long duracionMs) {
+    const unsigned long retrocesoMinimoMs = 70;
     unsigned long inicio = millis();
     while (millis() - inicio < duracionMs) {
         retroceder();
+
+        if ((millis() - inicio) >= retrocesoMinimoMs && puedePerseguirDuranteEvasion()) {
+            return;
+        }
+
         delay(5);
     }
 }
@@ -112,6 +128,10 @@ void Robot::giroEscapeSeguro(bool haciaDerecha, unsigned long duracionMs) {
         }
 
         if (!enBorde) {
+            if (enemigoVistoRapido()) {
+                return;
+            }
+
             if (bordeLiberado || tiempoGirando >= (giroMinimoMs + giroCorreccionMs)) {
                 return;
             }
@@ -134,6 +154,10 @@ void Robot::avanceEscapeSeguro(unsigned long duracionMs) {
         bool pisoIzq = false;
         bool pisoDer = false;
         if (leerPiso(pisoIzq, pisoDer)) {
+            return;
+        }
+
+        if (enemigoVistoRapido()) {
             return;
         }
 
