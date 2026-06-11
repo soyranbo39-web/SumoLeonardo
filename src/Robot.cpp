@@ -2,12 +2,15 @@
 
 namespace {
 const bool TELEMETRIA_ACTIVA = false;
-const unsigned long RETROCESO_BORDE_SIMPLE_MS = 260;
-const unsigned long RETROCESO_BORDE_DOBLE_MS = 320;
-const unsigned long GIRO_ESCAPE_BORDE_SIMPLE_MS = 220;
-const unsigned long GIRO_ESCAPE_BORDE_DOBLE_MS = 250;
-const unsigned long AVANCE_INTERIOR_SIMPLE_MS = 140;
-const unsigned long AVANCE_INTERIOR_DOBLE_MS = 170;
+const unsigned long RETROCESO_BORDE_SIMPLE_MS = 350;
+const unsigned long RETROCESO_BORDE_DOBLE_MS = 400;
+const unsigned long GIRO_ESCAPE_BORDE_SIMPLE_MS = 760;
+const unsigned long GIRO_ESCAPE_BORDE_DOBLE_MS = 840;
+const unsigned long AVANCE_INTERIOR_SIMPLE_MS = 230;
+const unsigned long AVANCE_INTERIOR_DOBLE_MS = 280;
+const unsigned long GIRO_REUBICACION_MS = 720;
+const unsigned long RETROCESO_INICIO_MS = 180;
+const unsigned long MEDIA_VUELTA_INICIO_MS = 760;
 }
 
 // ------------------ Control remoto (nivel) ------------------
@@ -61,13 +64,26 @@ bool Robot::enemigoVistoRapido() {
 }
 
 bool Robot::puedePerseguirDuranteEvasion() {
-    bool pisoIzq = false;
-    bool pisoDer = false;
-    if (leerPiso(pisoIzq, pisoDer)) {
-        return false;
+    // Requiere piso estable por varias muestras para evitar falsos "seguro"
+    // cuando aun esta cerca del borde.
+    const uint8_t muestrasSeguras = 8;
+    bool enemigoDetectado = false;
+
+    for (uint8_t i = 0; i < muestrasSeguras; ++i) {
+        bool pisoIzq = false;
+        bool pisoDer = false;
+        if (leerPiso(pisoIzq, pisoDer)) {
+            return false;
+        }
+
+        if (enemigoVistoRapido()) {
+            enemigoDetectado = true;
+        }
+
+        delay(3);
     }
 
-    return enemigoVistoRapido();
+    return enemigoDetectado;
 }
 
 bool Robot::esperarConPrioridadPisoYEnemigo(unsigned long duracionMs) {
@@ -88,30 +104,28 @@ bool Robot::esperarConPrioridadPisoYEnemigo(unsigned long duracionMs) {
     return false;
 }
 
-void Robot::retrocesoSeguro(unsigned long duracionMs) {
-    const unsigned long retrocesoMinimoMs = 70;
+bool Robot::retrocesoSeguro(unsigned long duracionMs) {
     unsigned long inicio = millis();
     while (millis() - inicio < duracionMs) {
-        retroceder();
-
-        if ((millis() - inicio) >= retrocesoMinimoMs && puedePerseguirDuranteEvasion()) {
-            return;
+        if (enemigoVistoRapido()) {
+            return true;
         }
+
+        retroceder();
 
         delay(5);
     }
+
+    return false;
 }
 
-void Robot::giroEscapeSeguro(bool haciaDerecha, unsigned long duracionMs) {
-    const unsigned long giroMinimoMs = 90;
-    const unsigned long giroCorreccionMs = 40;
+bool Robot::giroEscapeSeguro(bool haciaDerecha, unsigned long duracionMs) {
     unsigned long inicio = millis();
-    bool bordeLiberado = false;
 
     while (millis() - inicio < duracionMs) {
-        bool pisoIzq = false;
-        bool pisoDer = false;
-        bool enBorde = leerPiso(pisoIzq, pisoDer);
+        if (enemigoVistoRapido()) {
+            return true;
+        }
 
         if (haciaDerecha) {
             moverDerecha();
@@ -119,51 +133,62 @@ void Robot::giroEscapeSeguro(bool haciaDerecha, unsigned long duracionMs) {
             moverIzquierda();
         }
 
-        unsigned long tiempoGirando = millis() - inicio;
-
-        // Obliga un giro corto para despegarse del borde, pero no deja que siga rotando de mas.
-        if (tiempoGirando < giroMinimoMs) {
-            delay(5);
-            continue;
-        }
-
-        if (!enBorde) {
-            if (enemigoVistoRapido()) {
-                return;
-            }
-
-            if (bordeLiberado || tiempoGirando >= (giroMinimoMs + giroCorreccionMs)) {
-                return;
-            }
-            bordeLiberado = true;
-        } else {
-            bordeLiberado = false;
-        }
-
-        if (tiempoGirando >= duracionMs) {
-            return;
-        }
-
         delay(5);
     }
+
+    return false;
 }
 
-void Robot::avanceEscapeSeguro(unsigned long duracionMs) {
+bool Robot::avanceEscapeSeguro(unsigned long duracionMs) {
+    const unsigned long avanceMinimoMs = 140;
     unsigned long inicio = millis();
     while (millis() - inicio < duracionMs) {
+        if (enemigoVistoRapido()) {
+            return true;
+        }
+
         bool pisoIzq = false;
         bool pisoDer = false;
         if (leerPiso(pisoIzq, pisoDer)) {
-            return;
+            return false;
         }
 
-        if (enemigoVistoRapido()) {
-            return;
+        if ((millis() - inicio) >= avanceMinimoMs && puedePerseguirDuranteEvasion()) {
+            return true;
         }
 
         moverAdelante();
         delay(5);
     }
+
+    return false;
+}
+
+bool Robot::giroReubicacionSeguro(bool haciaDerecha, unsigned long duracionMs) {
+    const unsigned long giroMinimoMs = 120;
+    unsigned long inicio = millis();
+    while (millis() - inicio < duracionMs) {
+        if (enemigoVistoRapido()) {
+            return true;
+        }
+
+        bool pisoIzq = false;
+        bool pisoDer = false;
+        bool enBorde = leerPiso(pisoIzq, pisoDer);
+
+        if (!enBorde && (millis() - inicio) >= giroMinimoMs && puedePerseguirDuranteEvasion()) {
+            return true;
+        }
+
+        if (haciaDerecha) {
+            moverDerecha();
+        } else {
+            moverIzquierda();
+        }
+        delay(5);
+    }
+
+    return false;
 }
 
 void Robot::ejecutarBusquedaCompacta(bool haciaDerecha, unsigned long tiempoEnCiclo, unsigned long avanceMs) {
@@ -211,6 +236,40 @@ void Robot::ataqueEnemigo() {
     motores.adelante(Velocidad_maxima);
 }
 
+void Robot::ataqueSeguroPrioridadPiso() {
+    bool pisoIzq = false;
+    bool pisoDer = false;
+    if (!leerPiso(pisoIzq, pisoDer)) {
+        ataqueEnemigo();
+        return;
+    }
+
+    // Si aun esta en borde, prioriza reingresar al dojo antes de empujar.
+    unsigned long inicio = millis();
+    while (millis() - inicio < 110) {
+        retroceder();
+        delay(5);
+    }
+
+    inicio = millis();
+    while (millis() - inicio < 130) {
+        bool pIzq = false;
+        bool pDer = false;
+        if (!leerPiso(pIzq, pDer)) {
+            return;
+        }
+
+        if (pisoIzq && !pisoDer) {
+            moverDerecha();
+        } else if (pisoDer && !pisoIzq) {
+            moverIzquierda();
+        } else {
+            moverDerecha();
+        }
+        delay(5);
+    }
+}
+
 void Robot::moverAdelante() {
     motores.adelante(Velocidad_movimiento_seguir);
 }
@@ -220,29 +279,32 @@ void Robot::retroceder() {
 }
 
 void Robot::moverDerecha() {
-    motores.derecha(Velocidad_maxima);
+    motores.curvaDerecha(Velocidad_maxima);
 }
 
 void Robot::moverIzquierda() {
-    motores.izquierda(Velocidad_maxima);
+    motores.curvaIzquierda(Velocidad_maxima);
 }
 
 void Robot::sensoresPiso(bool pisoIzq, bool pisoDer) {
     static bool giroAlternadoDerecha = true;
 
     if (pisoIzq && pisoDer) {
-        retrocesoSeguro(RETROCESO_BORDE_DOBLE_MS);
-        giroEscapeSeguro(giroAlternadoDerecha, GIRO_ESCAPE_BORDE_DOBLE_MS);
-        avanceEscapeSeguro(AVANCE_INTERIOR_DOBLE_MS);
+        if (retrocesoSeguro(RETROCESO_BORDE_DOBLE_MS)) { ataqueSeguroPrioridadPiso(); return; }
+        if (giroEscapeSeguro(giroAlternadoDerecha, GIRO_ESCAPE_BORDE_DOBLE_MS)) { ataqueSeguroPrioridadPiso(); return; }
+        if (avanceEscapeSeguro(AVANCE_INTERIOR_DOBLE_MS)) { ataqueSeguroPrioridadPiso(); return; }
+        if (giroReubicacionSeguro(giroAlternadoDerecha, GIRO_REUBICACION_MS)) { ataqueSeguroPrioridadPiso(); return; }
         giroAlternadoDerecha = !giroAlternadoDerecha;
     } else if (pisoDer) {
-        retrocesoSeguro(RETROCESO_BORDE_SIMPLE_MS);
-        giroEscapeSeguro(false, GIRO_ESCAPE_BORDE_SIMPLE_MS);
-        avanceEscapeSeguro(AVANCE_INTERIOR_SIMPLE_MS);
+        if (retrocesoSeguro(RETROCESO_BORDE_SIMPLE_MS)) { ataqueSeguroPrioridadPiso(); return; }
+        if (giroEscapeSeguro(false, GIRO_ESCAPE_BORDE_SIMPLE_MS)) { ataqueSeguroPrioridadPiso(); return; }
+        if (avanceEscapeSeguro(AVANCE_INTERIOR_SIMPLE_MS)) { ataqueSeguroPrioridadPiso(); return; }
+        if (giroReubicacionSeguro(true, GIRO_REUBICACION_MS)) { ataqueSeguroPrioridadPiso(); return; }
     } else if (pisoIzq) {
-        retrocesoSeguro(RETROCESO_BORDE_SIMPLE_MS);
-        giroEscapeSeguro(true, GIRO_ESCAPE_BORDE_SIMPLE_MS);
-        avanceEscapeSeguro(AVANCE_INTERIOR_SIMPLE_MS);
+        if (retrocesoSeguro(RETROCESO_BORDE_SIMPLE_MS)) { ataqueSeguroPrioridadPiso(); return; }
+        if (giroEscapeSeguro(true, GIRO_ESCAPE_BORDE_SIMPLE_MS)) { ataqueSeguroPrioridadPiso(); return; }
+        if (avanceEscapeSeguro(AVANCE_INTERIOR_SIMPLE_MS)) { ataqueSeguroPrioridadPiso(); return; }
+        if (giroReubicacionSeguro(false, GIRO_REUBICACION_MS)) { ataqueSeguroPrioridadPiso(); return; }
     }
 }
 
@@ -251,18 +313,18 @@ void Robot::sensoresFrontales(bool central, bool derecho, bool izquierdo) {
         ataqueEnemigo();
     } else if (derecho) {
         moverDerecha();
-        if (esperarConPrioridadPisoYEnemigo(55)) {
+        if (esperarConPrioridadPisoYEnemigo(90)) {
             return;
         }
         motores.adelante(Velocidad_maxima);
-        esperarConPrioridadPisoYEnemigo(55);
+        esperarConPrioridadPisoYEnemigo(90);
     } else if (izquierdo) {
         moverIzquierda();
-        if (esperarConPrioridadPisoYEnemigo(55)) {
+        if (esperarConPrioridadPisoYEnemigo(90)) {
             return;
         }
         motores.adelante(Velocidad_maxima);
-        esperarConPrioridadPisoYEnemigo(55);
+        esperarConPrioridadPisoYEnemigo(90);
     }
 }
 
@@ -279,10 +341,10 @@ void Robot::sensoresLaterales(bool sensorIzquierdo, bool sensorDerecho) {
     // puede permanecer activo durante todo el giro y abortarlo demasiado pronto.
     if (sensorIzquierdo) {
         motores.curvaIzquierda(Velocidad_maxima);  // Solo rueda derecha gira
-        esperarConPrioridadPiso(110);
+        esperarConPrioridadPiso(160);
     } else if (sensorDerecho) {
         motores.curvaDerecha(Velocidad_maxima);    // Solo rueda izquierda gira
-        esperarConPrioridadPiso(110);
+        esperarConPrioridadPiso(160);
     }
 }
 
@@ -298,7 +360,9 @@ void Robot::loop() {
     static unsigned long ultimoFrontalCentralMs = 0;
     static unsigned long ultimoLateralDerMs = 0;
     static unsigned long ultimoLateralIzqMs = 0;
-    static unsigned long inicioApagadoMs = 0;
+    static bool rutinaInicioPendiente = false;
+    static uint8_t faseRutinaInicio = 0;
+    static unsigned long inicioFaseRutinaInicio = 0;
 
     const unsigned long ahoraControl = millis();
     int lecturaControl = digitalRead(Pin_Control_Remoto);
@@ -307,10 +371,25 @@ void Robot::loop() {
         estado_control_anterior = lecturaControl;
         ultimo_cambio_boton = ahoraControl;
 
-        // Enciende inmediatamente al detectar Start, sin esperar debounce.
+        // Enciende inmediatamente al detectar Start.
+        // El apagado se valida con debounce para evitar paradas por ruido.
         bool ahora_activo = REMOTE_ACTIVE_HIGH ? (lecturaControl == HIGH) : (lecturaControl == LOW);
         if (ahora_activo) {
             robot_encendido = true;
+
+            // Cada START fuerza la rutina de llegar a la linea.
+            faseBusqueda = 0;
+            inicioFaseBusqueda = 0;
+            busquedaDerecha = true;
+            ultimoFrontalDerMs = 0;
+            ultimoFrontalIzqMs = 0;
+            ultimoFrontalCentralMs = 0;
+            ultimoLateralDerMs = 0;
+            ultimoLateralIzqMs = 0;
+            busquedaActiva = false;
+            rutinaInicioPendiente = true;
+            faseRutinaInicio = 0;
+            inicioFaseRutinaInicio = 0;
         }
     }
 
@@ -323,23 +402,25 @@ void Robot::loop() {
     const bool recienEncendido = (!estadoAnteriorEncendido && robot_encendido);
 
     if (!robot_encendido) {
-        // Mantener STOP un tiempo reinicia el ciclo de busqueda a su fase inicial.
-        if (inicioApagadoMs == 0) {
-            inicioApagadoMs = ahoraControl;
-        }
-        if ((ahoraControl - inicioApagadoMs) >= 2500) {
-            busquedaDerecha = true;
-            faseBusqueda = 0;
-            inicioFaseBusqueda = 0;
-            busquedaActiva = false;
-        }
+        // Cada apagado reinicia estados para que al volver a ON siempre ejecute rutina inicial.
+        busquedaDerecha = true;
+        faseBusqueda = 0;
+        inicioFaseBusqueda = 0;
+        busquedaActiva = false;
+        rutinaInicioPendiente = false;
+        faseRutinaInicio = 0;
+        inicioFaseRutinaInicio = 0;
+        ultimoFrontalDerMs = 0;
+        ultimoFrontalIzqMs = 0;
+        ultimoFrontalCentralMs = 0;
+        ultimoLateralDerMs = 0;
+        ultimoLateralIzqMs = 0;
 
         detenerse();
         estadoAnteriorEncendido = false;
         return;
     }
 
-    inicioApagadoMs = 0;
     estadoAnteriorEncendido = true;
 
     if (recienEncendido) {
@@ -353,6 +434,9 @@ void Robot::loop() {
         ultimoLateralDerMs = 0;
         ultimoLateralIzqMs = 0;
         busquedaActiva = false;
+        rutinaInicioPendiente = true;
+        faseRutinaInicio = 0;
+        inicioFaseRutinaInicio = 0;
     }
 
     const unsigned long ahora = millis();
@@ -414,6 +498,43 @@ void Robot::loop() {
         Serial.println(PisoDer ? "BLANCO" : "PISTA");
     }
 
+    // Rutina obligatoria de inicio: avanzar recto hasta tocar borde.
+    // Mientras esta activa, no ataca ni ejecuta busqueda.
+    if (rutinaInicioPendiente) {
+        if (faseRutinaInicio == 0) {
+            if (PisoIzq || PisoDer) {
+                faseRutinaInicio = 1;
+                inicioFaseRutinaInicio = ahora;
+            } else {
+                moverAdelante();
+                return;
+            }
+        }
+
+        if (faseRutinaInicio == 1) {
+            if ((ahora - inicioFaseRutinaInicio) < RETROCESO_INICIO_MS) {
+                retroceder();
+                return;
+            }
+            faseRutinaInicio = 2;
+            inicioFaseRutinaInicio = ahora;
+        }
+
+        if (faseRutinaInicio == 2) {
+            if ((ahora - inicioFaseRutinaInicio) < MEDIA_VUELTA_INICIO_MS) {
+                moverDerecha();
+                return;
+            }
+
+            rutinaInicioPendiente = false;
+            faseRutinaInicio = 0;
+            inicioFaseRutinaInicio = 0;
+            faseBusqueda = 0;
+            inicioFaseBusqueda = 0;
+            busquedaActiva = false;
+        }
+    }
+
     if (PisoIzq || PisoDer) {
         inicioFaseBusqueda = 0;
         faseBusqueda = 0;
@@ -432,7 +553,7 @@ void Robot::loop() {
     } else {
         // Prioridad 3 (BAJA): busqueda sin enemigo.
         // Estrategia unica (sin modos): barrido trasero + lateral + empuje frontal corto.
-        const int margenSeguridadPiso = 35;
+        const int margenSeguridadPiso = 50;
         const bool cercaBordeIzq = valorPisoIzq <= (BLANCO + margenSeguridadPiso);
         const bool cercaBordeDer = valorPisoDer <= (BLANCO + margenSeguridadPiso);
 
@@ -443,11 +564,11 @@ void Robot::loop() {
         }
 
         const unsigned long duraciones[6] = {
-            780, // Fase 0: giro largo para barrer espalda.
+            1150, // Fase 0: giro largo para barrer espalda.
             300, // Fase 1: avance corto.
-            780, // Fase 2: giro largo contrario.
+            1150, // Fase 2: giro largo contrario.
             300, // Fase 3: avance corto.
-            520, // Fase 4: giro medio para cubrir lateral/frente.
+            760, // Fase 4: giro medio para cubrir lateral/frente.
             200  // Fase 5: empuje frontal corto.
         };
 

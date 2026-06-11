@@ -16,9 +16,11 @@ class Robot {
     bool enemigoVistoRapido();
     bool puedePerseguirDuranteEvasion();
     bool esperarConPrioridadPisoYEnemigo(unsigned long duracionMs);
-    void retrocesoSeguro(unsigned long duracionMs);
-    void giroEscapeSeguro(bool haciaDerecha, unsigned long duracionMs);
-    void avanceEscapeSeguro(unsigned long duracionMs);
+    bool retrocesoSeguro(unsigned long duracionMs);
+    bool giroEscapeSeguro(bool haciaDerecha, unsigned long duracionMs);
+    bool avanceEscapeSeguro(unsigned long duracionMs);
+    bool giroReubicacionSeguro(bool haciaDerecha, unsigned long duracionMs);
+    void ataqueSeguroPrioridadPiso();
     void ejecutarBusquedaCompacta(bool haciaDerecha, unsigned long tiempoEnCiclo, unsigned long avanceMs);
 public:
     Robot();
