@@ -18,6 +18,7 @@ class Robot {
     void retrocesoSeguro(unsigned long duracionMs);
     void giroEscapeSeguro(bool haciaDerecha, unsigned long duracionMs);
     void avanceEscapeSeguro(unsigned long duracionMs);
+    bool reingresoCombateSeguro(bool ultimoGiroDerecha, unsigned long avanceMs, unsigned long correccionMs);
     void ejecutarBusquedaCompacta(bool haciaDerecha, unsigned long tiempoEnCiclo, unsigned long avanceMs);
     void rutinaInicialBordeMediaVuelta();
 public:
