@@ -1,12 +1,20 @@
 #include "Robot.h"
 
 namespace {
-const unsigned long RETROCESO_BORDE_SIMPLE_MS = 260;
-const unsigned long RETROCESO_BORDE_DOBLE_MS = 320;
+const unsigned long RETROCESO_BORDE_SIMPLE_MS = 360;
+const unsigned long RETROCESO_BORDE_DOBLE_MS = 420;
 const unsigned long GIRO_ESCAPE_BORDE_SIMPLE_MS = 220;
 const unsigned long GIRO_ESCAPE_BORDE_DOBLE_MS = 250;
 const unsigned long AVANCE_INTERIOR_SIMPLE_MS = 140;
 const unsigned long AVANCE_INTERIOR_DOBLE_MS = 170;
+const int VELOCIDAD_RETROCESO_BORDE = Velocidad_maxima;
+const unsigned long MEMORIA_OBJETIVO_MS = 260;
+const unsigned long PIVOTE_LATERAL_MS = 120;
+const unsigned long EMPUJE_TRAS_PIVOTE_MS = 90;
+const unsigned long RETROCESO_BORDE_DOBLE_EXTRA_MS = 140;
+const unsigned long GIRO_ESCAPE_BORDE_DOBLE_EXTRA_MS = 90;
+const int VELOCIDAD_ATAQUE_FRENTE = Velocidad_maxima;
+const int VELOCIDAD_AVANCE_NORMAL = 140;
 }
 
 // ------------------ Control remoto (nivel) ------------------
@@ -80,7 +88,7 @@ bool Robot::esperarConPrioridadPisoYEnemigo(unsigned long duracionMs) {
 void Robot::retrocesoSeguro(unsigned long duracionMs) {
     unsigned long inicio = millis();
     while (millis() - inicio < duracionMs) {
-        retroceder();
+        motores.retroceder(VELOCIDAD_RETROCESO_BORDE);
         delay(5);
     }
 }
@@ -190,11 +198,11 @@ void Robot::detenerse() {
 }
 
 void Robot::ataqueEnemigo() {
-    motores.adelante(Velocidad_maxima);
+    motores.adelante(VELOCIDAD_ATAQUE_FRENTE);
 }
 
 void Robot::moverAdelante() {
-    motores.adelante(Velocidad_movimiento_seguir);
+    motores.adelante(VELOCIDAD_AVANCE_NORMAL);
 }
 
 void Robot::retroceder() {
@@ -213,9 +221,19 @@ void Robot::sensoresPiso(bool pisoIzq, bool pisoDer) {
     static bool giroAlternadoDerecha = true;
 
     if (pisoIzq && pisoDer) {
-        retrocesoSeguro(RETROCESO_BORDE_DOBLE_MS);
-        giroEscapeSeguro(giroAlternadoDerecha, GIRO_ESCAPE_BORDE_DOBLE_MS);
-        avanceEscapeSeguro(AVANCE_INTERIOR_DOBLE_MS);
+        // Caso mas critico: ambos sensores en borde. Prioriza alejarse y revalidar.
+        retrocesoSeguro(RETROCESO_BORDE_DOBLE_MS + RETROCESO_BORDE_DOBLE_EXTRA_MS);
+        giroEscapeSeguro(giroAlternadoDerecha, GIRO_ESCAPE_BORDE_DOBLE_MS + GIRO_ESCAPE_BORDE_DOBLE_EXTRA_MS);
+
+        bool pisoPostIzq = false;
+        bool pisoPostDer = false;
+        if (leerPiso(pisoPostIzq, pisoPostDer)) {
+            retrocesoSeguro(RETROCESO_BORDE_SIMPLE_MS);
+            giroEscapeSeguro(!giroAlternadoDerecha, GIRO_ESCAPE_BORDE_SIMPLE_MS);
+        }
+
+        // En doble borde evita empuje frontal largo para no volver a la linea.
+        avanceEscapeSeguro(AVANCE_INTERIOR_DOBLE_MS / 2);
         giroAlternadoDerecha = !giroAlternadoDerecha;
     } else if (pisoDer) {
         retrocesoSeguro(RETROCESO_BORDE_SIMPLE_MS);
@@ -236,14 +254,14 @@ void Robot::sensoresFrontales(bool central, bool derecho, bool izquierdo) {
         if (esperarConPrioridadPisoYEnemigo(55)) {
             return;
         }
-        motores.adelante(Velocidad_maxima);
+        motores.adelante(VELOCIDAD_ATAQUE_FRENTE);
         esperarConPrioridadPisoYEnemigo(55);
     } else if (izquierdo) {
         moverIzquierda();
         if (esperarConPrioridadPisoYEnemigo(55)) {
             return;
         }
-        motores.adelante(Velocidad_maxima);
+        motores.adelante(VELOCIDAD_ATAQUE_FRENTE);
         esperarConPrioridadPisoYEnemigo(55);
     }
 }
@@ -255,16 +273,18 @@ void Robot::sensoresLaterales(bool sensorIzquierdo, bool sensorDerecho) {
     leerPiso(pisoIzq, pisoDer);
     if (pisoIzq || pisoDer) return;
 
-    // Gira comprometido 120ms hacia el lado del enemigo.
-    // Verifica piso cada 5ms para abortar si hay borde.
-    // Importante: no se corta por "enemigo visto" porque en lateral el sensor
-    // puede permanecer activo durante todo el giro y abortarlo demasiado pronto.
+    // Pivote con una sola llanta para orientar el frontal hacia el enemigo lateral.
+    // Luego aplica un empuje corto para reenganchar con sensores frontales.
     if (sensorIzquierdo) {
         motores.curvaIzquierda(Velocidad_maxima);  // Solo rueda derecha gira
-        esperarConPrioridadPiso(110);
+        if (esperarConPrioridadPiso(PIVOTE_LATERAL_MS)) return;
+        motores.adelante(Velocidad_maxima);
+        esperarConPrioridadPisoYEnemigo(EMPUJE_TRAS_PIVOTE_MS);
     } else if (sensorDerecho) {
         motores.curvaDerecha(Velocidad_maxima);    // Solo rueda izquierda gira
-        esperarConPrioridadPiso(110);
+        if (esperarConPrioridadPiso(PIVOTE_LATERAL_MS)) return;
+        motores.adelante(Velocidad_maxima);
+        esperarConPrioridadPisoYEnemigo(EMPUJE_TRAS_PIVOTE_MS);
     }
 }
 
@@ -333,6 +353,8 @@ void Robot::loop() {
     }
     static uint8_t estadoPrev = 0;
     static uint8_t accionPrev = 5;
+    static unsigned long ultimoAvistamientoMs = 0;
+    static int8_t ultimoLadoEnemigo = 0; // -1 izquierda, +1 derecha, 0 centro/indefinido
     // PID angular: error = posicion angular del enemigo [-4,+4], salida = diferencial de motores
     static float pidIntegral  = 0.0f;
     static float pidPrevError = 0.0f;
@@ -402,6 +424,8 @@ void Robot::loop() {
         tAngPrev       = 0;
         estadoPrev = 0;
         accionPrev = 5;
+        ultimoAvistamientoMs = 0;
+        ultimoLadoEnemigo = 0;
         memcpy(qtable, QTABLE_DEFAULTS, sizeof(qtable));
         busquedaActiva = false;
     }
@@ -445,7 +469,6 @@ void Robot::loop() {
     bool LateralIzq     = (confLateralIzq     >= 2);
 
     const bool enemigoDetectado = FrontalDer || FrontalIzq || FrontalCentral || LateralDer || LateralIzq;
-    (void)enemigoDetectado;
 
     // --- Posicion angular del enemigo estimada desde valores de confianza [-4, +4] ---
     float totalConf = (float)(confFrontalDer + confFrontalIzq + confFrontalCentral +
@@ -467,6 +490,21 @@ void Robot::loop() {
         tAngPrev = ahora;
     }
     float anguloPred = angulo + velAngular * 80.0f;
+
+    if (enemigoDetectado) {
+        ultimoAvistamientoMs = ahora;
+        if (LateralIzq && !LateralDer) {
+            ultimoLadoEnemigo = -1;
+        } else if (LateralDer && !LateralIzq) {
+            ultimoLadoEnemigo = 1;
+        } else if (FrontalIzq && !FrontalDer) {
+            ultimoLadoEnemigo = -1;
+        } else if (FrontalDer && !FrontalIzq) {
+            ultimoLadoEnemigo = 1;
+        } else {
+            ultimoLadoEnemigo = 0;
+        }
+    }
 
     // --- PID angular: diferencial de velocidad para centrar al enemigo ---
     const float KP_PID = 50.0f;
@@ -522,9 +560,19 @@ void Robot::loop() {
         }
     }
 
-    // Sin enemigo detectado, ejecuta siempre la busqueda clasica por fases.
+    // Sin enemigo detectado, usa memoria corta para no perder seguimiento.
     if (estadoQ == 0) {
-        accionQ = 5;
+        if ((ahora - ultimoAvistamientoMs) <= MEMORIA_OBJETIVO_MS) {
+            if (ultimoLadoEnemigo > 0) {
+                accionQ = 3;
+            } else if (ultimoLadoEnemigo < 0) {
+                accionQ = 4;
+            } else {
+                accionQ = 0;
+            }
+        } else {
+            accionQ = 5;
+        }
     }
 
     estadoPrev = estadoQ;
@@ -538,14 +586,24 @@ void Robot::loop() {
         pidIntegral = 0.0f;
         sensoresPiso(PisoIzq, PisoDer);
     } else {
+        const bool lateralSoloIzq = LateralIzq && !LateralDer && !FrontalCentral && !FrontalIzq && !FrontalDer;
+        const bool lateralSoloDer = LateralDer && !LateralIzq && !FrontalCentral && !FrontalIzq && !FrontalDer;
+        if (lateralSoloIzq || lateralSoloDer) {
+            faseBusqueda = 0;
+            inicioFaseBusqueda = 0;
+            busquedaActiva = false;
+            sensoresLaterales(lateralSoloIzq, lateralSoloDer);
+            return;
+        }
+
         switch (accionQ) {
             case 0: {
                 // Ataque con PID diferencial: centra al enemigo ajustando velocidades.
                 float out = pidSalida;
-                if (out >  (float)Velocidad_maxima) out =  (float)Velocidad_maxima;
-                if (out < -(float)Velocidad_maxima) out = -(float)Velocidad_maxima;
-                int velI = (int)((float)Velocidad_maxima + out);
-                int velD = (int)((float)Velocidad_maxima - out);
+                if (out >  (float)VELOCIDAD_ATAQUE_FRENTE) out =  (float)VELOCIDAD_ATAQUE_FRENTE;
+                if (out < -(float)VELOCIDAD_ATAQUE_FRENTE) out = -(float)VELOCIDAD_ATAQUE_FRENTE;
+                int velI = (int)((float)VELOCIDAD_ATAQUE_FRENTE + out);
+                int velD = (int)((float)VELOCIDAD_ATAQUE_FRENTE - out);
                 if (velI > Velocidad_maxima) velI = Velocidad_maxima;
                 if (velI < 60) velI = 60;
                 if (velD > Velocidad_maxima) velD = Velocidad_maxima;
@@ -577,7 +635,7 @@ void Robot::loop() {
                 busquedaActiva = false;
                 break;
             default: {
-                // BUSCAR: patron por fases (barrido trasero + lateral + empuje frontal).
+                // BUSCAR: patron rapido de pivotes + empujes para reacquirir objetivo.
                 const int margenSeguridadPiso = 35;
                 const bool cercaBordeIzq = kfPisoIzqX <= (float)(BLANCO + margenSeguridadPiso);
                 const bool cercaBordeDer = kfPisoDerX <= (float)(BLANCO + margenSeguridadPiso);
@@ -589,7 +647,7 @@ void Robot::loop() {
                 }
 
                 const unsigned long duraciones[6] = {
-                    780, 500, 780, 500, 520, 300
+                    240, 110, 240, 110, 180, 100
                 };
 
                 if ((ahora - inicioFaseBusqueda) >= duraciones[faseBusqueda]) {
@@ -608,11 +666,11 @@ void Robot::loop() {
                     return;
                 }
 
-                if      (faseBusqueda == 0) { if (busquedaDerecha) moverDerecha();   else moverIzquierda(); }
+                if      (faseBusqueda == 0) { if (busquedaDerecha) motores.curvaDerecha(Velocidad_maxima);   else motores.curvaIzquierda(Velocidad_maxima); }
                 else if (faseBusqueda == 1) { motores.adelante(Velocidad_maxima); }
-                else if (faseBusqueda == 2) { if (busquedaDerecha) moverIzquierda(); else moverDerecha();   }
+                else if (faseBusqueda == 2) { if (busquedaDerecha) motores.curvaIzquierda(Velocidad_maxima); else motores.curvaDerecha(Velocidad_maxima);   }
                 else if (faseBusqueda == 3) { motores.adelante(Velocidad_maxima); }
-                else if (faseBusqueda == 4) { if (busquedaDerecha) moverDerecha();   else moverIzquierda(); }
+                else if (faseBusqueda == 4) { if (busquedaDerecha) motores.curvaDerecha(Velocidad_maxima);   else motores.curvaIzquierda(Velocidad_maxima); }
                 else                        { motores.adelante(Velocidad_maxima); }
                 break;
             }
