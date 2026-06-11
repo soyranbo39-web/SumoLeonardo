@@ -15,6 +15,7 @@ public:
 
 class Motores {
     Motor motorIzq, motorDer;
+    bool bordeBloqueaMovimiento();
 public:
     Motores();
     void adelante(int velocidad);

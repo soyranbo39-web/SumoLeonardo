@@ -1,5 +1,9 @@
 #include "Motor.h"
 #include "Definiciones.h"
+#include "SensorPiso.h"
+
+extern SensorPiso sensorPisoIzq;
+extern SensorPiso sensorPisoDer;
 
 // indicador de movimientos
 namespace {
@@ -46,7 +50,23 @@ Motores::Motores() :
     motorIzq(MA1A, MA2A, PWMA),
     motorDer(MA1B, MA2B, PWMB) {}
 
+bool Motores::bordeBloqueaMovimiento() {
+    if (!Validar_borde_en_movimientos) {
+        return false;
+    }
+
+    if (sensorPisoIzq.detectar() || sensorPisoDer.detectar()) {
+        detener();
+        return true;
+    }
+
+    return false;
+}
+
 void Motores::adelante(int velocidad) {
+    if (bordeBloqueaMovimiento()) {
+        return;
+    }
     motorIzq.avanzar(velocidad);
     motorDer.avanzar(velocidad);
     setLedsMovimiento(true, false);
@@ -65,24 +85,36 @@ void Motores::detener() {
 }
 
 void Motores::derecha(int velocidad) {
+    if (bordeBloqueaMovimiento()) {
+        return;
+    }
     motorIzq.avanzar(velocidad);
     motorDer.retroceder(velocidad);
     setLedsMovimiento(true, true);
 }
 
 void Motores::izquierda(int velocidad) {
+    if (bordeBloqueaMovimiento()) {
+        return;
+    }
     motorIzq.retroceder(velocidad);
     motorDer.avanzar(velocidad);
     setLedsMovimiento(false, true);
 }
 
 void Motores::curvaDerecha(int velocidad) {
+    if (bordeBloqueaMovimiento()) {
+        return;
+    }
     motorIzq.avanzar(velocidad);
     motorDer.detener();
     setLedsMovimiento(true, false);
 }
 
 void Motores::curvaIzquierda(int velocidad) {
+    if (bordeBloqueaMovimiento()) {
+        return;
+    }
     motorIzq.detener();
     motorDer.avanzar(velocidad);
     setLedsMovimiento(false, true);

@@ -37,7 +37,13 @@ const bool Usar_Arrancador = false;            // false: inicia solo despues del
 const unsigned long Retardo_Autoinicio_ms = 5000; // Tiempo para colocar el robot antes de arrancar
 
 // Parámetros
-#define BLANCO 120
+#define BLANCO 60
+#define Histeresis_piso 20
+const bool Sensor_piso_activo_bajo = false;
+const bool Auto_calibrar_piso = true;
+const int Muestras_calibracion_piso = 50;
+const int Margen_calibracion_piso = 80;
+const bool Validar_borde_en_movimientos = true;
 #define Velocidad_movimiento_seguir  160 
 #define Velocidad_estandar 180  
 #define Velocidad_normal 120 
