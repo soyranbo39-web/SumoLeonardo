@@ -26,7 +26,18 @@ Robot::Robot()
 			sensorLateralDer(S_LAT_DER)
 {}
 
-void Robot::setup() {}
+void Robot::setup() {
+	if (Usar_Arrancador) {
+		pinMode(Pin_Control_Remoto, INPUT);
+		while (digitalRead(Pin_Control_Remoto) == LOW) {
+			motores.detener();
+			delay(10);
+		}
+	}
+
+	// Sin arrancador: pequeno retardo para estabilizar sensores/alimentacion.
+	delay(Retardo_Autoinicio_ms);
+}
 
 void Robot::detenerse() {
 	motores.detener();

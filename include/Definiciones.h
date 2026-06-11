@@ -32,6 +32,10 @@
 // Pin de control remoto
 const int Pin_Control_Remoto = A0; // Start=1, Stop=0
 
+// Configuracion de arranque
+const bool Usar_Arrancador = false;
+const unsigned long Retardo_Autoinicio_ms = 500;
+
 // Parámetros
 #define BLANCO 120
 #define Velocidad_movimiento_seguir  160 
