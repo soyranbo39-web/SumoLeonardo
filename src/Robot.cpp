@@ -3,18 +3,63 @@
 namespace {
 const unsigned long RETROCESO_BORDE_SIMPLE_MS = 360;
 const unsigned long RETROCESO_BORDE_DOBLE_MS = 420;
-const unsigned long GIRO_ESCAPE_BORDE_SIMPLE_MS = 220;
-const unsigned long GIRO_ESCAPE_BORDE_DOBLE_MS = 250;
+const unsigned long GIRO_ESCAPE_BORDE_SIMPLE_MS = 360;
+const unsigned long GIRO_ESCAPE_BORDE_DOBLE_MS = 390;
 const unsigned long AVANCE_INTERIOR_SIMPLE_MS = 140;
 const unsigned long AVANCE_INTERIOR_DOBLE_MS = 170;
-const int VELOCIDAD_RETROCESO_BORDE = Velocidad_maxima;
+const int VELOCIDAD_RETROCESO_BORDE = 200;
+const int VELOCIDAD_MANIOBRA = 200;
+const int VELOCIDAD_MANIOBRA_ATAQUE = 210;
+const int VELOCIDAD_BUSQUEDA = 155;
+const int VELOCIDAD_LATERAL = 160;
+const int VELOCIDAD_RETROCESO_NORMAL = 150;
 const unsigned long MEMORIA_OBJETIVO_MS = 260;
 const unsigned long PIVOTE_LATERAL_MS = 120;
 const unsigned long EMPUJE_TRAS_PIVOTE_MS = 90;
 const unsigned long RETROCESO_BORDE_DOBLE_EXTRA_MS = 140;
 const unsigned long GIRO_ESCAPE_BORDE_DOBLE_EXTRA_MS = 90;
-const int VELOCIDAD_ATAQUE_FRENTE = Velocidad_maxima;
-const int VELOCIDAD_AVANCE_NORMAL = 140;
+const int VELOCIDAD_ATAQUE_FRENTE = 255;
+const int VELOCIDAD_ATAQUE_CRUCERO = 230;
+const int BONO_PULSO_ATAQUE = 25;
+const int BONO_PULSO_ATAQUE_CENTRO = 15;
+const float ANGULO_MAX_PULSO_ATAQUE = 1.4f;
+const unsigned long ATAQUE_PULSO_ON_MS = 70;
+const unsigned long ATAQUE_PULSO_OFF_MS = 35;
+const int VELOCIDAD_AVANCE_NORMAL = 100;
+const unsigned long RUTINA_INICIO_GIRO_MEDIA_VUELTA_MS = 470;
+const unsigned long RUTINA_INICIO_ASENTAR_MS = 80;
+const unsigned long RUTINA_INICIO_RETROCESO_MS = 280;
+const int VELOCIDAD_RUTINA_INICIO = 68;
+const int VELOCIDAD_RUTINA_INICIO_LENTA = 48;
+const int VELOCIDAD_RUTINA_INICIO_RETROCESO = 150;
+const int MARGEN_DETECCION_BORDE_CERCA = 130;
+const int MARGEN_DETECCION_BORDE_INICIO = 80;
+const uint8_t MUESTRAS_BORDE_CONFIRMACION = 4;
+const unsigned long RUTINA_INICIO_PULSO_AVANCE_MS = 10;
+const unsigned long RUTINA_INICIO_PULSO_FRENO_MS = 14;
+const int CONF_ENEMIGO_INC = 2;
+const int CONF_ENEMIGO_DEC = 1;
+const int CONF_ENEMIGO_MAX = 6;
+const int CONF_ENEMIGO_ACTIVO = 3;
+const float ANGULO_EMA_BETA = 0.34f;
+const float VEL_ANGULAR_MAX = 0.10f;
+const float PREDICCION_ANTICIPO_MS = 75.0f;
+const float ANGULO_PRED_MAX = 4.5f;
+const float KP_PID = 44.0f;
+const float KI_PID = 3.2f;
+const float KD_PID = 2.8f;
+const float PID_DERIV_EMA_BETA = 0.42f;
+const float PID_INTEGRAL_MAX = 2.4f;
+const float PID_OUT_MAX = 140.0f;
+const float PID_ZONA_MUERTA = 0.10f;
+const float Q_ALPHA = 0.12f;
+const float Q_GAMMA = 0.88f;
+const int8_t RECOMPENSA_ENEMIGO = 8;
+const int8_t PENALIZACION_SIN_ENEMIGO = -1;
+const int8_t PENALIZACION_BORDE = -25;
+const int8_t PENALIZACION_CAMBIO_ACCION = -2;
+const unsigned long MIN_TIEMPO_ACCION_MS = 70;
+const uint8_t EXPLORACION_PORCENTAJE = 8;
 }
 
 // ------------------ Control remoto (nivel) ------------------
@@ -156,10 +201,82 @@ void Robot::ejecutarBusquedaCompacta(bool haciaDerecha, unsigned long tiempoEnCi
     }
 
     if (haciaDerecha) {
-        motores.curvaDerecha(Velocidad_maxima);
+        motores.curvaDerecha(VELOCIDAD_BUSQUEDA);
     } else {
-        motores.curvaIzquierda(Velocidad_maxima);
+        motores.curvaIzquierda(VELOCIDAD_BUSQUEDA);
     }
+}
+
+void Robot::rutinaInicialBordeMediaVuelta() {
+    auto bordeCercaInicio = []() {
+        const int pisoIzq = analogRead(SENSOR_DE_PISO_IZQUIERDO);
+        const int pisoDer = analogRead(SENSOR_DE_PISO_DERECHO);
+        return (pisoIzq <= (BLANCO + MARGEN_DETECCION_BORDE_CERCA)) ||
+               (pisoDer <= (BLANCO + MARGEN_DETECCION_BORDE_CERCA));
+    };
+
+    auto bordeDetectadoInicio = []() {
+        const int pisoIzq = analogRead(SENSOR_DE_PISO_IZQUIERDO);
+        const int pisoDer = analogRead(SENSOR_DE_PISO_DERECHO);
+        return (pisoIzq <= (BLANCO + MARGEN_DETECCION_BORDE_INICIO)) ||
+               (pisoDer <= (BLANCO + MARGEN_DETECCION_BORDE_INICIO));
+    };
+
+    uint8_t muestrasConBorde = 0;
+    bool zonaCercana = false;
+
+    // Avanza obligatoriamente hasta confirmar borde; durante esta rutina no se procesa enemigo.
+    while (true) {
+        zonaCercana = zonaCercana || bordeCercaInicio();
+
+        if (bordeDetectadoInicio()) {
+            if (muestrasConBorde < 255) {
+                muestrasConBorde++;
+            }
+            if (muestrasConBorde >= MUESTRAS_BORDE_CONFIRMACION) {
+                break;
+            }
+        } else {
+            muestrasConBorde = 0;
+        }
+
+        // Avance por micropulsos para reducir inercia y poder frenar antes de salir.
+        if (zonaCercana) {
+            motores.adelante(VELOCIDAD_RUTINA_INICIO_LENTA);
+        } else {
+            motores.adelante(VELOCIDAD_RUTINA_INICIO);
+        }
+        delay(RUTINA_INICIO_PULSO_AVANCE_MS);
+        motores.detener();
+        delay(RUTINA_INICIO_PULSO_FRENO_MS);
+    }
+
+    motores.detener();
+    delay(RUTINA_INICIO_ASENTAR_MS);
+
+    // Retrocede mientras siga viendo borde y despues agrega un margen extra al interior.
+    while (bordeDetectadoInicio()) {
+        motores.retroceder(VELOCIDAD_RUTINA_INICIO_RETROCESO);
+        delay(5);
+    }
+
+    const unsigned long inicioRetrocesoExtra = millis();
+    while ((millis() - inicioRetrocesoExtra) < RUTINA_INICIO_RETROCESO_MS) {
+        motores.retroceder(VELOCIDAD_RUTINA_INICIO_RETROCESO);
+        delay(5);
+    }
+
+    motores.detener();
+    delay(RUTINA_INICIO_ASENTAR_MS);
+
+    // Media vuelta para quedar orientado hacia el interior del dohyo.
+    const unsigned long inicioGiro = millis();
+    while ((millis() - inicioGiro) < RUTINA_INICIO_GIRO_MEDIA_VUELTA_MS) {
+        moverDerecha();
+        delay(5);
+    }
+
+    motores.detener();
 }
 
 void Robot::setup() {
@@ -206,15 +323,15 @@ void Robot::moverAdelante() {
 }
 
 void Robot::retroceder() {
-    motores.retroceder(Velocidad_estandar);
+    motores.retroceder(VELOCIDAD_RETROCESO_NORMAL);
 }
 
 void Robot::moverDerecha() {
-    motores.derecha(Velocidad_maxima);
+    motores.derecha(VELOCIDAD_MANIOBRA);
 }
 
 void Robot::moverIzquierda() {
-    motores.izquierda(Velocidad_maxima);
+    motores.izquierda(VELOCIDAD_MANIOBRA);
 }
 
 void Robot::sensoresPiso(bool pisoIzq, bool pisoDer) {
@@ -250,14 +367,14 @@ void Robot::sensoresFrontales(bool central, bool derecho, bool izquierdo) {
     if (central || (derecho && izquierdo)) {
         ataqueEnemigo();
     } else if (derecho) {
-        moverDerecha();
+        motores.derecha(VELOCIDAD_MANIOBRA_ATAQUE);
         if (esperarConPrioridadPisoYEnemigo(55)) {
             return;
         }
         motores.adelante(VELOCIDAD_ATAQUE_FRENTE);
         esperarConPrioridadPisoYEnemigo(55);
     } else if (izquierdo) {
-        moverIzquierda();
+        motores.izquierda(VELOCIDAD_MANIOBRA_ATAQUE);
         if (esperarConPrioridadPisoYEnemigo(55)) {
             return;
         }
@@ -276,14 +393,14 @@ void Robot::sensoresLaterales(bool sensorIzquierdo, bool sensorDerecho) {
     // Pivote con una sola llanta para orientar el frontal hacia el enemigo lateral.
     // Luego aplica un empuje corto para reenganchar con sensores frontales.
     if (sensorIzquierdo) {
-        motores.curvaIzquierda(Velocidad_maxima);  // Solo rueda derecha gira
+        motores.curvaIzquierda(VELOCIDAD_LATERAL);  // Solo rueda derecha gira
         if (esperarConPrioridadPiso(PIVOTE_LATERAL_MS)) return;
-        motores.adelante(Velocidad_maxima);
+        motores.adelante(VELOCIDAD_LATERAL);
         esperarConPrioridadPisoYEnemigo(EMPUJE_TRAS_PIVOTE_MS);
     } else if (sensorDerecho) {
-        motores.curvaDerecha(Velocidad_maxima);    // Solo rueda izquierda gira
+        motores.curvaDerecha(VELOCIDAD_LATERAL);    // Solo rueda izquierda gira
         if (esperarConPrioridadPiso(PIVOTE_LATERAL_MS)) return;
-        motores.adelante(Velocidad_maxima);
+        motores.adelante(VELOCIDAD_LATERAL);
         esperarConPrioridadPisoYEnemigo(EMPUJE_TRAS_PIVOTE_MS);
     }
 }
@@ -359,11 +476,18 @@ void Robot::loop() {
     static float pidIntegral  = 0.0f;
     static float pidPrevError = 0.0f;
     static float pidSalida    = 0.0f;
+    static float pidDerivFiltrada = 0.0f;
     static unsigned long pidTmsAnt = 0;
+    static bool ataquePulsoOn = true;
+    static unsigned long ataquePulsoRefMs = 0;
     // Prediccion lineal de primer orden: estima angulo del enemigo en ~80ms
+    static float anguloFiltrado  = 0.0f;
     static float anguloAnterior   = 0.0f;
     static float velAngular       = 0.0f;
     static unsigned long tAngPrev = 0;
+    static uint8_t accionAplicada = 5;
+    static unsigned long tAccionAplicadaMs = 0;
+    static uint32_t lcgEstado = 0xC0FFEE11UL;
 
     #if USAR_ARRANCADOR
     const unsigned long ahoraControl = millis();
@@ -418,16 +542,26 @@ void Robot::loop() {
         pidIntegral  = 0.0f;
         pidPrevError = 0.0f;
         pidSalida    = 0.0f;
+        pidDerivFiltrada = 0.0f;
         pidTmsAnt    = 0;
+        ataquePulsoOn = true;
+        ataquePulsoRefMs = 0;
+        anguloFiltrado = 0.0f;
         anguloAnterior = 0.0f;
         velAngular     = 0.0f;
         tAngPrev       = 0;
+        accionAplicada = 5;
+        tAccionAplicadaMs = 0;
+        lcgEstado = 0xC0FFEE11UL;
         estadoPrev = 0;
         accionPrev = 5;
         ultimoAvistamientoMs = 0;
         ultimoLadoEnemigo = 0;
         memcpy(qtable, QTABLE_DEFAULTS, sizeof(qtable));
         busquedaActiva = false;
+
+        // Rutina obligatoria de inicio: ir al borde y hacer media vuelta.
+        rutinaInicialBordeMediaVuelta();
     }
 
     const unsigned long ahora = millis();
@@ -454,42 +588,46 @@ void Robot::loop() {
     bool PisoDer = (kfPisoDerX <= (float)BLANCO);
 
     // --- Filtro de confianza para sensores de enemigo (digitales) ---
-    // +2 al detectar (respuesta rapida), -1 sin deteccion (histeresis).
-    // Activo si contador >= 2. Rango [0, 4].
-    confFrontalDer     = (int8_t)constrain(confFrontalDer     + (sensorFrontalDer.detectar() ? 2 : -1), 0, 4);
-    confFrontalIzq     = (int8_t)constrain(confFrontalIzq     + (sensorFrontalIzq.detectar() ? 2 : -1), 0, 4);
-    confFrontalCentral = (int8_t)constrain(confFrontalCentral + (sensorFrontal.detectar()    ? 2 : -1), 0, 4);
-    confLateralDer     = (int8_t)constrain(confLateralDer     + (sensorLateralDer.detectar() ? 2 : -1), 0, 4);
-    confLateralIzq     = (int8_t)constrain(confLateralIzq     + (sensorLateralIzq.detectar() ? 2 : -1), 0, 4);
+    // Filtro de confianza con histéresis más estable para reducir falsos picos.
+    confFrontalDer     = (int8_t)constrain(confFrontalDer     + (sensorFrontalDer.detectar() ? CONF_ENEMIGO_INC : -CONF_ENEMIGO_DEC), 0, CONF_ENEMIGO_MAX);
+    confFrontalIzq     = (int8_t)constrain(confFrontalIzq     + (sensorFrontalIzq.detectar() ? CONF_ENEMIGO_INC : -CONF_ENEMIGO_DEC), 0, CONF_ENEMIGO_MAX);
+    confFrontalCentral = (int8_t)constrain(confFrontalCentral + (sensorFrontal.detectar()    ? CONF_ENEMIGO_INC : -CONF_ENEMIGO_DEC), 0, CONF_ENEMIGO_MAX);
+    confLateralDer     = (int8_t)constrain(confLateralDer     + (sensorLateralDer.detectar() ? CONF_ENEMIGO_INC : -CONF_ENEMIGO_DEC), 0, CONF_ENEMIGO_MAX);
+    confLateralIzq     = (int8_t)constrain(confLateralIzq     + (sensorLateralIzq.detectar() ? CONF_ENEMIGO_INC : -CONF_ENEMIGO_DEC), 0, CONF_ENEMIGO_MAX);
 
-    bool FrontalDer     = (confFrontalDer     >= 2);
-    bool FrontalIzq     = (confFrontalIzq     >= 2);
-    bool FrontalCentral = (confFrontalCentral >= 2);
-    bool LateralDer     = (confLateralDer     >= 2);
-    bool LateralIzq     = (confLateralIzq     >= 2);
+    bool FrontalDer     = (confFrontalDer     >= CONF_ENEMIGO_ACTIVO);
+    bool FrontalIzq     = (confFrontalIzq     >= CONF_ENEMIGO_ACTIVO);
+    bool FrontalCentral = (confFrontalCentral >= CONF_ENEMIGO_ACTIVO);
+    bool LateralDer     = (confLateralDer     >= CONF_ENEMIGO_ACTIVO);
+    bool LateralIzq     = (confLateralIzq     >= CONF_ENEMIGO_ACTIVO);
 
     const bool enemigoDetectado = FrontalDer || FrontalIzq || FrontalCentral || LateralDer || LateralIzq;
 
     // --- Posicion angular del enemigo estimada desde valores de confianza [-4, +4] ---
     float totalConf = (float)(confFrontalDer + confFrontalIzq + confFrontalCentral +
                                confLateralDer + confLateralIzq);
-    float angulo = 0.0f;
+    float anguloInst = 0.0f;
     if (totalConf > 0.0f) {
-        angulo = ((float)confFrontalDer  *  2.0f - (float)confFrontalIzq  *  2.0f +
-                  (float)confLateralDer  *  4.0f - (float)confLateralIzq  *  4.0f)
-                 / totalConf;
+        anguloInst = ((float)confFrontalDer  *  2.0f - (float)confFrontalIzq  *  2.0f +
+                      (float)confLateralDer  *  4.0f - (float)confLateralIzq  *  4.0f)
+                     / totalConf;
     }
+    anguloFiltrado += ANGULO_EMA_BETA * (anguloInst - anguloFiltrado);
 
     // --- Prediccion lineal a 80ms: adelanta la reaccion ante enemigos rapidos ---
     {
         unsigned long dtAngMs = ahora - tAngPrev;
         if (dtAngMs > 0 && dtAngMs < 100) {
-            velAngular = (angulo - anguloAnterior) / (float)dtAngMs;
+            velAngular = (anguloFiltrado - anguloAnterior) / (float)dtAngMs;
+            if (velAngular >  VEL_ANGULAR_MAX) velAngular =  VEL_ANGULAR_MAX;
+            if (velAngular < -VEL_ANGULAR_MAX) velAngular = -VEL_ANGULAR_MAX;
         }
-        anguloAnterior = angulo;
+        anguloAnterior = anguloFiltrado;
         tAngPrev = ahora;
     }
-    float anguloPred = angulo + velAngular * 80.0f;
+    float anguloPred = anguloFiltrado + velAngular * PREDICCION_ANTICIPO_MS;
+    if (anguloPred >  ANGULO_PRED_MAX) anguloPred =  ANGULO_PRED_MAX;
+    if (anguloPred < -ANGULO_PRED_MAX) anguloPred = -ANGULO_PRED_MAX;
 
     if (enemigoDetectado) {
         ultimoAvistamientoMs = ahora;
@@ -506,21 +644,31 @@ void Robot::loop() {
         }
     }
 
-    // --- PID angular: diferencial de velocidad para centrar al enemigo ---
-    const float KP_PID = 50.0f;
-    const float KI_PID =  2.0f;
-    const float KD_PID =  4.0f;
+    // --- PID angular robusto: zona muerta, derivada filtrada y anti-windup ---
     {
         float dtPidMs = (float)(ahora - pidTmsAnt);
         if (dtPidMs > 0.0f && dtPidMs < 100.0f) {
             float dtS = dtPidMs * 0.001f;
-            pidIntegral += anguloPred * dtS;
-            if (pidIntegral >  3.0f) pidIntegral =  3.0f;
-            if (pidIntegral < -3.0f) pidIntegral = -3.0f;
-            float deriv = (anguloPred - pidPrevError) / dtS;
-            pidSalida = KP_PID * anguloPred + KI_PID * pidIntegral + KD_PID * deriv;
+            float errorPid = anguloPred;
+            if (errorPid < PID_ZONA_MUERTA && errorPid > -PID_ZONA_MUERTA) {
+                errorPid = 0.0f;
+            }
+
+            if (enemigoDetectado) {
+                pidIntegral += errorPid * dtS;
+            } else {
+                pidIntegral *= 0.85f;
+            }
+            if (pidIntegral >  PID_INTEGRAL_MAX) pidIntegral =  PID_INTEGRAL_MAX;
+            if (pidIntegral < -PID_INTEGRAL_MAX) pidIntegral = -PID_INTEGRAL_MAX;
+
+            float derivRaw = (errorPid - pidPrevError) / dtS;
+            pidDerivFiltrada += PID_DERIV_EMA_BETA * (derivRaw - pidDerivFiltrada);
+            pidSalida = KP_PID * errorPid + KI_PID * pidIntegral + KD_PID * pidDerivFiltrada;
+            if (pidSalida >  PID_OUT_MAX) pidSalida =  PID_OUT_MAX;
+            if (pidSalida < -PID_OUT_MAX) pidSalida = -PID_OUT_MAX;
+            pidPrevError = errorPid;
         }
-        pidPrevError = anguloPred;
         pidTmsAnt    = ahora;
     }
 
@@ -534,13 +682,16 @@ void Robot::loop() {
 
     // Actualiza Q-tabla con resultado de la iteracion anterior (Bellman / online).
     {
-        int8_t recompensa = (PisoIzq || PisoDer) ? -20 : (estadoQ != 0 ? 5 : 0);
+        int8_t recompensa = (PisoIzq || PisoDer) ? PENALIZACION_BORDE : (estadoQ != 0 ? RECOMPENSA_ENEMIGO : PENALIZACION_SIN_ENEMIGO);
+        if (accionPrev != accionAplicada) {
+            recompensa += PENALIZACION_CAMBIO_ACCION;
+        }
         int8_t maxQNuevo  = qtable[estadoQ][0];
         for (uint8_t a = 1; a < 6; a++) {
             if (qtable[estadoQ][a] > maxQNuevo) maxQNuevo = qtable[estadoQ][a];
         }
         float qUpd = (float)qtable[estadoPrev][accionPrev]
-                   + 0.15f * ((float)recompensa + 0.9f * (float)maxQNuevo
+                   + Q_ALPHA * ((float)recompensa + Q_GAMMA * (float)maxQNuevo
                               - (float)qtable[estadoPrev][accionPrev]);
         int qC = (int)qUpd;
         if (qC >  120) qC =  120;
@@ -575,6 +726,28 @@ void Robot::loop() {
         }
     }
 
+    // Exploracion pequeña y controlada para evitar estancamiento del aprendizaje.
+    if (estadoQ != 0) {
+        lcgEstado = 1664525UL * lcgEstado + 1013904223UL;
+        uint8_t r100 = (uint8_t)((lcgEstado >> 24) % 100U);
+        if (r100 < EXPLORACION_PORCENTAJE) {
+            accionQ = (uint8_t)((lcgEstado >> 16) % 5U);
+        }
+    }
+
+    // Evita cambios de accion nerviosos: mantiene una accion minima mientras hay enemigo.
+    if (tAccionAplicadaMs == 0) {
+        accionAplicada = accionQ;
+        tAccionAplicadaMs = ahora;
+    }
+    if (estadoQ != 0 && accionQ != accionAplicada && (ahora - tAccionAplicadaMs) < MIN_TIEMPO_ACCION_MS) {
+        accionQ = accionAplicada;
+    }
+    if (accionQ != accionAplicada) {
+        accionAplicada = accionQ;
+        tAccionAplicadaMs = ahora;
+    }
+
     estadoPrev = estadoQ;
     accionPrev = accionQ;
 
@@ -584,6 +757,11 @@ void Robot::loop() {
         inicioFaseBusqueda = 0;
         busquedaActiva = false;
         pidIntegral = 0.0f;
+        pidDerivFiltrada = 0.0f;
+        ataquePulsoOn = true;
+        ataquePulsoRefMs = 0;
+        accionAplicada = 5;
+        tAccionAplicadaMs = 0;
         sensoresPiso(PisoIzq, PisoDer);
     } else {
         const bool lateralSoloIzq = LateralIzq && !LateralDer && !FrontalCentral && !FrontalIzq && !FrontalDer;
@@ -598,16 +776,39 @@ void Robot::loop() {
 
         switch (accionQ) {
             case 0: {
-                // Ataque con PID diferencial: centra al enemigo ajustando velocidades.
+                // Ataque combinado: PID para centrar + pulsos para incrementar empuje.
+                if (ataquePulsoRefMs == 0) {
+                    ataquePulsoRefMs = ahora;
+                }
+
+                const unsigned long ventanaPulsoMs = ataquePulsoOn ? ATAQUE_PULSO_ON_MS : ATAQUE_PULSO_OFF_MS;
+                if ((ahora - ataquePulsoRefMs) >= ventanaPulsoMs) {
+                    ataquePulsoOn = !ataquePulsoOn;
+                    ataquePulsoRefMs = ahora;
+                }
+
+                float absAnguloPred = anguloPred;
+                if (absAnguloPred < 0.0f) absAnguloPred = -absAnguloPred;
+                const bool frenteFuerte = FrontalCentral && (FrontalDer || FrontalIzq || (confFrontalCentral >= (CONF_ENEMIGO_MAX - 1)));
+                const bool habilitarPulso = enemigoDetectado && (absAnguloPred <= ANGULO_MAX_PULSO_ATAQUE);
+                int baseAtaque = VELOCIDAD_ATAQUE_CRUCERO;
+                if (habilitarPulso && ataquePulsoOn) {
+                    int bonoPulso = BONO_PULSO_ATAQUE;
+                    if (frenteFuerte) {
+                        bonoPulso += BONO_PULSO_ATAQUE_CENTRO;
+                    }
+                    baseAtaque += bonoPulso;
+                }
+
                 float out = pidSalida;
                 if (out >  (float)VELOCIDAD_ATAQUE_FRENTE) out =  (float)VELOCIDAD_ATAQUE_FRENTE;
                 if (out < -(float)VELOCIDAD_ATAQUE_FRENTE) out = -(float)VELOCIDAD_ATAQUE_FRENTE;
-                int velI = (int)((float)VELOCIDAD_ATAQUE_FRENTE + out);
-                int velD = (int)((float)VELOCIDAD_ATAQUE_FRENTE - out);
-                if (velI > Velocidad_maxima) velI = Velocidad_maxima;
-                if (velI < 60) velI = 60;
-                if (velD > Velocidad_maxima) velD = Velocidad_maxima;
-                if (velD < 60) velD = 60;
+                int velI = (int)((float)baseAtaque + out);
+                int velD = (int)((float)baseAtaque - out);
+                if (velI > VELOCIDAD_ATAQUE_FRENTE) velI = VELOCIDAD_ATAQUE_FRENTE;
+                if (velI < 70) velI = 70;
+                if (velD > VELOCIDAD_ATAQUE_FRENTE) velD = VELOCIDAD_ATAQUE_FRENTE;
+                if (velD < 70) velD = 70;
                 motores.getIzquierdo().avanzar(velI);
                 motores.getDerecho().avanzar(velD);
                 faseBusqueda = 0;
@@ -615,26 +816,36 @@ void Robot::loop() {
                 break;
             }
             case 1:
-                moverDerecha();
+                ataquePulsoOn = true;
+                ataquePulsoRefMs = 0;
+                motores.derecha(VELOCIDAD_MANIOBRA_ATAQUE);
                 faseBusqueda = 0;
                 busquedaActiva = false;
                 break;
             case 2:
-                moverIzquierda();
+                ataquePulsoOn = true;
+                ataquePulsoRefMs = 0;
+                motores.izquierda(VELOCIDAD_MANIOBRA_ATAQUE);
                 faseBusqueda = 0;
                 busquedaActiva = false;
                 break;
             case 3:
-                motores.curvaDerecha(Velocidad_maxima);
+                ataquePulsoOn = true;
+                ataquePulsoRefMs = 0;
+                motores.curvaDerecha(VELOCIDAD_MANIOBRA_ATAQUE);
                 faseBusqueda = 0;
                 busquedaActiva = false;
                 break;
             case 4:
-                motores.curvaIzquierda(Velocidad_maxima);
+                ataquePulsoOn = true;
+                ataquePulsoRefMs = 0;
+                motores.curvaIzquierda(VELOCIDAD_MANIOBRA_ATAQUE);
                 faseBusqueda = 0;
                 busquedaActiva = false;
                 break;
             default: {
+                ataquePulsoOn = true;
+                ataquePulsoRefMs = 0;
                 // BUSCAR: patron rapido de pivotes + empujes para reacquirir objetivo.
                 const int margenSeguridadPiso = 35;
                 const bool cercaBordeIzq = kfPisoIzqX <= (float)(BLANCO + margenSeguridadPiso);
@@ -666,12 +877,12 @@ void Robot::loop() {
                     return;
                 }
 
-                if      (faseBusqueda == 0) { if (busquedaDerecha) motores.curvaDerecha(Velocidad_maxima);   else motores.curvaIzquierda(Velocidad_maxima); }
-                else if (faseBusqueda == 1) { motores.adelante(Velocidad_maxima); }
-                else if (faseBusqueda == 2) { if (busquedaDerecha) motores.curvaIzquierda(Velocidad_maxima); else motores.curvaDerecha(Velocidad_maxima);   }
-                else if (faseBusqueda == 3) { motores.adelante(Velocidad_maxima); }
-                else if (faseBusqueda == 4) { if (busquedaDerecha) motores.curvaDerecha(Velocidad_maxima);   else motores.curvaIzquierda(Velocidad_maxima); }
-                else                        { motores.adelante(Velocidad_maxima); }
+                if      (faseBusqueda == 0) { if (busquedaDerecha) motores.curvaDerecha(VELOCIDAD_BUSQUEDA);   else motores.curvaIzquierda(VELOCIDAD_BUSQUEDA); }
+                else if (faseBusqueda == 1) { motores.adelante(VELOCIDAD_BUSQUEDA); }
+                else if (faseBusqueda == 2) { if (busquedaDerecha) motores.curvaIzquierda(VELOCIDAD_BUSQUEDA); else motores.curvaDerecha(VELOCIDAD_BUSQUEDA);   }
+                else if (faseBusqueda == 3) { motores.adelante(VELOCIDAD_BUSQUEDA); }
+                else if (faseBusqueda == 4) { if (busquedaDerecha) motores.curvaDerecha(VELOCIDAD_BUSQUEDA);   else motores.curvaIzquierda(VELOCIDAD_BUSQUEDA); }
+                else                        { motores.adelante(VELOCIDAD_BUSQUEDA); }
                 break;
             }
         }

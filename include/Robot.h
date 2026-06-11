@@ -19,6 +19,7 @@ class Robot {
     void giroEscapeSeguro(bool haciaDerecha, unsigned long duracionMs);
     void avanceEscapeSeguro(unsigned long duracionMs);
     void ejecutarBusquedaCompacta(bool haciaDerecha, unsigned long tiempoEnCiclo, unsigned long avanceMs);
+    void rutinaInicialBordeMediaVuelta();
 public:
     Robot();
     void setup();
