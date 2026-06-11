@@ -32,6 +32,10 @@
 // Pin de control remoto
 const int Pin_Control_Remoto = A0; // Start=1, Stop=0
 
+// Arranque
+const bool Usar_Arrancador = false;            // false: inicia solo despues del retardo
+const unsigned long Retardo_Autoinicio_ms = 5000; // Tiempo para colocar el robot antes de arrancar
+
 // Parámetros
 #define BLANCO 120
 #define Velocidad_movimiento_seguir  160 

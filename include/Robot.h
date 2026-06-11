@@ -19,6 +19,9 @@ class Robot {
     void giroEscapeSeguro(bool haciaDerecha, unsigned long duracionMs);
     void avanceEscapeSeguro(unsigned long duracionMs);
     void ejecutarBusquedaCompacta(bool haciaDerecha, unsigned long tiempoEnCiclo, unsigned long avanceMs);
+    bool sistemaListoParaCombatir();
+    bool combateHabilitado;
+    unsigned long marcaInicio;
 public:
     Robot();
     void setup();

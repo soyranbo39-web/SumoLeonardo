@@ -2,6 +2,8 @@
 #include "Motor.h"
 #include "Definiciones.h"
 
+extern Motores motores;
+
 EstrategiasDinamicas::EstrategiasDinamicas() : tipoRival(DESCONOCIDO), contadorAtaques(0), contadorEscapes(0) {}
 
 void EstrategiasDinamicas::actualizar(bool ataqueRecibido, bool enemigoEscapa, bool enemigoAtaca) {

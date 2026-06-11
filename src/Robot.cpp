@@ -34,10 +34,29 @@ Robot::Robot()
 			sensorFrontalIzq(S_FRONT_IZQ),
 			sensorFrontalDer(S_FRONT_DER),
 			sensorLateralIzq(S_LAT_IZQ),
-			sensorLateralDer(S_LAT_DER)
+			sensorLateralDer(S_LAT_DER),
+			combateHabilitado(false),
+			marcaInicio(0)
 {}
 
-void Robot::setup() {}
+void Robot::setup() {
+	pinMode(Pin_Control_Remoto, INPUT);
+	marcaInicio = millis();
+}
+
+bool Robot::sistemaListoParaCombatir() {
+	if (Usar_Arrancador) {
+		combateHabilitado = (digitalRead(Pin_Control_Remoto) == HIGH);
+	} else if (!combateHabilitado) {
+		combateHabilitado = (millis() - marcaInicio) >= Retardo_Autoinicio_ms;
+	}
+
+	if (!combateHabilitado) {
+		motores.detener();
+	}
+
+	return combateHabilitado;
+}
 
 void Robot::detenerse() {
 	motores.detener();
@@ -86,6 +105,10 @@ void Robot::sensoresFrontales(bool central, bool derecho, bool izquierdo) {}
 void Robot::sensoresLaterales(bool sensorIzquierdo, bool sensorDerecho) {}
 
 void Robot::loop() {
+	if (!sistemaListoParaCombatir()) {
+		return;
+	}
+
 	// Auto-diagnóstico antes de cualquier acción
 	autodiagnostico.checarSensores();
 	autodiagnostico.checarMotores();

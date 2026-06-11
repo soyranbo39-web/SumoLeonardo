@@ -12,4 +12,3 @@ public:
 };
 
 #endif // ESTRATEGIAS_BUSQUEDA_H
-#include "Definiciones.h"

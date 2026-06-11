@@ -1,5 +1,5 @@
-#ifndef ENGAÑO_SUMO_H
-#define ENGAÑO_SUMO_H
+#ifndef ENGANO_SUMO_H
+#define ENGANO_SUMO_H
 
 #include <Arduino.h>
 
@@ -10,4 +10,4 @@ public:
     void fintarGiro();
 };
 
-#endif // ENGAÑO_SUMO_H
+#endif // ENGANO_SUMO_H
