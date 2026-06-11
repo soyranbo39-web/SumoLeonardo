@@ -155,7 +155,9 @@ void Robot::ejecutarBusquedaCompacta(bool haciaDerecha, unsigned long tiempoEnCi
 }
 
 void Robot::setup() {
+    #if USAR_ARRANCADOR
     pinMode(Pin_Control_Remoto, INPUT);
+    #endif
     pinMode(SENSOR_DE_PISO_IZQUIERDO, INPUT);
     pinMode(SENSOR_DE_PISO_DERECHO, INPUT);
     pinMode(SENSOR_FRONTAL_DERECHO, INPUT);
@@ -170,11 +172,17 @@ void Robot::setup() {
     pinMode(MA1B, OUTPUT);
     pinMode(PWMB, OUTPUT);
 
+    #if USAR_ARRANCADOR
     // Estado inicial segun nivel del control remoto.
     int lecturaInicial = digitalRead(Pin_Control_Remoto);
     estado_control_anterior = lecturaInicial;
     bool controlActivo = REMOTE_ACTIVE_HIGH ? (lecturaInicial == HIGH) : (lecturaInicial == LOW);
     robot_encendido = controlActivo;
+    #else
+    // Sin arrancador remoto: el robot queda habilitado al energizarse.
+    estado_control_anterior = REMOTE_ACTIVE_HIGH ? HIGH : LOW;
+    robot_encendido = true;
+    #endif
 }
 
 void Robot::detenerse() {
@@ -335,6 +343,7 @@ void Robot::loop() {
     static float velAngular       = 0.0f;
     static unsigned long tAngPrev = 0;
 
+    #if USAR_ARRANCADOR
     const unsigned long ahoraControl = millis();
     int lecturaControl = digitalRead(Pin_Control_Remoto);
 
@@ -352,6 +361,9 @@ void Robot::loop() {
         bool controlActivo = REMOTE_ACTIVE_HIGH ? (lecturaControl == HIGH) : (lecturaControl == LOW);
         robot_encendido = controlActivo;
     }
+    #else
+    robot_encendido = true;
+    #endif
 
     const bool recienEncendido = (!estadoAnteriorEncendido && robot_encendido);
 
